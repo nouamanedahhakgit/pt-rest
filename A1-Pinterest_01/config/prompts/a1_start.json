@@ -1,0 +1,14 @@
+{
+  "repair_recipe": {
+    "max_tokens": 800,
+    "temperature": 0.2,
+    "system": "You are a strict recipe formatter. Do NOT change ingredients or instructions meaningfully. Only fix formatting and add missing metadata lines at the end. Calories MUST be present and should be clearly labeled as an estimate if uncertain.",
+    "user_template": "Here is a recipe text. Make it match EXACTLY this structure:\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ...\n\nInstructions:\n1. ...\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Keep Ingredients and Instructions the same (do not rewrite).\n- If any of Prep/Cook/Total/Course/Cuisine/Servings are missing, set them to N/A.\n- Calories MUST NOT be N/A. Provide an estimated calories number per serving, and write it like:\n  \"Calories: ~320 per serving\"\n- Output ONLY the recipe in that format. No markdown.\n\nRecipe Text:\n\"\"\"{recipe_text}\"\"\""
+  },
+  "generate_from_title": {
+    "max_tokens": 1200,
+    "temperature": 0.6,
+    "system": "You are a professional recipe writer. Follow the exact format. Calories line is REQUIRED and should be an estimate if needed.",
+    "user_template": "Create ONE unique recipe for this title:\n{title}\n\nReturn ONLY this structure (no markdown, no extra text):\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ingredient line\n- ingredient line\n\nInstructions:\n1. step\n2. step\n3. step\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Ingredients must be bullet lines starting with \"- \".\n- Instructions must be numbered (6–11 steps).\n- Calories MUST be present. If you can't know exactly, estimate and use \"~\" like:\n  Calories: ~320 per serving"
+  }
+}

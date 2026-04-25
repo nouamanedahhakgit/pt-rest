@@ -1,0 +1,35 @@
+{
+  "openai_model": "gpt-4o-mini",
+  "article_language": "English",
+  "a4_total_words": 3000,
+  "a4_max_tokens_per_part": 3000,
+  "a4_ingredients_label": "Ingredients",
+  "a4_recipe_excel": "ALL/A1-Pinterest_01-out/images.xlsx",
+  "a4_recipe_sheet": "Sheet1",
+  "a4_recipe_column": "Recipe",
+  "a2_prompt_model": "gpt-4o-mini",
+  "category_id_mapping": {
+    "drinks": 1,
+    "dessert": 7,
+    "appetizers": 5,
+    "dinner": 4
+  },
+  "pinterest_boards": [
+    "Party Snacks & Finger Foods",
+    "Irresistible Desserts & Sweets",
+    "Cakes, Cookies & Treats",
+    "Healthy Dinner Inspiration",
+    "Family Dinner Ideas",
+    "Easy Recipes",
+    "Recipes to Make",
+    "Quick & Easy Dinner Recipes",
+    "Easy & Delicious Appetizers",
+    "Summer Drinks Inspiration",
+    "Smoothies, Juices & Mocktails",
+    "Refreshing Drinks & Beverages",
+    "Food cravings"
+  ],
+  "a3_submit_spacing_seconds": 2.5,
+  "a2_json_max_tokens": 1200,
+  "a2_json_temperature": 0.2
+}

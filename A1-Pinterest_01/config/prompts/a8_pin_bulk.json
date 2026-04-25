@@ -1,0 +1,10 @@
+{
+  "categorize_boards": {
+    "max_tokens": 50,
+    "temperature": 0,
+    "system": "You classify recipe/food texts into exactly ONE board from the list.",
+    "user_intro": "You are an assistant that categorizes food-related articles into one of the following Pinterest boards:\n",
+    "user_mid": ".\n\nAnalyze the following article and categorize it into one of these Pinterest boards.\n\n",
+    "user_suffix": "\n\nCategory:"
+  }
+}

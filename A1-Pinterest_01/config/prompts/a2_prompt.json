@@ -1,0 +1,29 @@
+{
+  "main_dish_system": "Return ONLY one Midjourney prompt in English (no labels, no markdown). You MUST keep it policy-safe and food-only. Realistic, appetizing ULTRA close-up of the final plated dish. Serve in a clean white ceramic bowl or plate (shape may vary), on a white or light neutral surface. Tight composition filling ~90–100% of frame (partial plate crop OK), clear food texture, shallow depth of field, soft natural daylight, gentle shadows. Sharp focus at food center, slight 3/4 or eye-level angle. Exclude people, hands, faces, text, logos, and packaging. End with --v 6.1.",
+  "main_dish_user_prefix": "Recipe: ",
+  "ingredient_extract_system": "From the recipe, extract ONLY the main ingredient NAMES in English. Return a single comma-separated list of UNIQUE items (no duplicates at all). Do NOT include measurements, quantities, adjectives, or preparation words.",
+  "ingredient_scene_template": "{ingredients_csv}, ingredients-only, top-down flat lay, each ingredient appears once, neatly separated in small bowls and directly on the surface, wide framing with generous margins, clean spacing, light neutral background (soft gray or light beige) with subtle texture (stone or light wood), soft natural daylight, soft minimal shadows, -- no text, -- no labels, -- no logos, -- no packaging, -- minimal styling",
+  "allowed_food_style_fallback": "realistic, appetizing, food photography, shallow depth of field, soft natural daylight, clean minimal styling, no people, no text, no logos, no packaging",
+  "food_only_guard": "food-only scene, dish-focused, exclude people, exclude hands, exclude faces, no text, no labels, no logos, no packaging, kitchen or neutral surface only",
+  "sensitive_patterns": [
+    "\\b(gore|gory|blood\\b|bloody|dismember|beheading|corpse|kill|murder|suicide|self[-\\s]?harm|violence)\\b",
+    "\\b(nude|nudity|nsfw|porn|erotic|sexual|sex|sensual|fetish|boobs|nipple|butt|ass|lingerie)\\b",
+    "\\b(fuck|shit|bitch|bastard|slut|dick|cock|pussy|cunt)\\b",
+    "\\b(gun|rifle|pistol|weapon|grenade|missile|tank|gunmetal)\\b",
+    "\\b(hitler|nazi|swastika|terror|isis|politic(al)?|election|protest)\\b",
+    "\\b(teen|child|kid|minors?|age\\s*\\d{1,2}|young\\s+girl|young\\s+boy)\\b",
+    "\\b(drug|cocaine|heroin|weed|marijuana|alcohol|beer|wine|vodka)\\b",
+    "\\b(logo|watermark|caption|text\\s+overlay|typography)\\b"
+  ],
+  "soft_replacements": [
+    { "pattern": "\\bbloody\\b", "replace": "rich red" },
+    { "pattern": "\\bblood\\b", "replace": "rich red" },
+    { "pattern": "\\bgunmetal\\b", "replace": "charcoal gray" },
+    { "pattern": "\\bsexy\\b", "replace": "appealing" },
+    { "pattern": "\\bsensual\\b", "replace": "inviting" }
+  ],
+  "chat_max_tokens_default": 600,
+  "chat_temperature_default": 0.6,
+  "safe_max_tokens": 400,
+  "ingredient_extract_max_tokens": 220
+}
