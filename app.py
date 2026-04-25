@@ -4,7 +4,7 @@ import subprocess
 import threading
 import queue
 import json
-from flask import Flask, Response, request, jsonify
+from flask import Flask, Response, request, jsonify, stream_with_context
 import openpyxl
 import openai
 import sys
@@ -78,6 +78,70 @@ _SUBPROCESS_STDOUT_KWARGS = {
     "errors": "replace",
     "bufsize": 1,
 }
+
+# A.4-ARTICLES: install compat + retry on ChatCompletion before runpy (used by all runners, not only parallel).
+# Top level must be column 0 in -c string.
+_A4_ARTICLES_BOOTSTRAP = r"""import os, sys, time, random, socket, runpy
+import openai
+_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+import openai_chat_compat
+openai_chat_compat.install()
+
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    RateLimitError,
+    InternalServerError,
+    APIError,
+)
+
+_orig = openai.ChatCompletion.create
+MAX_TRIES = int(os.getenv("OPENAI_RETRY_MAX_TRIES", "6"))
+TIMEOUT = int(os.getenv("OPENAI_REQUEST_TIMEOUT", "180"))
+
+def _retryable(e):
+    if isinstance(e, (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError, socket.timeout)):
+        return True
+    if isinstance(e, APIError):
+        code = getattr(e, "status_code", None) or getattr(e, "http_status", None)
+        return code in (500, 502, 503, 504)
+    return False
+
+def _create_with_retry(*args, **kwargs):
+    if "request_timeout" not in kwargs:
+        kwargs["request_timeout"] = TIMEOUT
+
+    for attempt in range(1, MAX_TRIES + 1):
+        try:
+            return _orig(*args, **kwargs)
+        except Exception as e:
+            if not _retryable(e):
+                raise
+            wait = min(60, (2 ** (attempt - 1)) + random.random())
+            print(f"[OpenAI Retry {attempt}/{MAX_TRIES}] {type(e).__name__}: {e} | waiting {wait:.1f}s...", flush=True)
+            time.sleep(wait)
+
+    raise RuntimeError("OpenAI request failed after multiple retries.")
+
+openai.ChatCompletion.create = _create_with_retry
+runpy.run_path("A.4-ARTICLES.py", run_name="__main__")
+"""
+
+
+def _popen_pipeline_script(folder_abs: str, script: str, base_env: dict) -> subprocess.Popen:
+    """Start a pipeline .py; A.4-ARTICLES uses bootstrap -c for OpenAI retry wrapper."""
+    if script == "A.4-ARTICLES.py":
+        cmd = [sys.executable, "-u", "-c", _A4_ARTICLES_BOOTSTRAP]
+    else:
+        cmd = [sys.executable, "-u", script]
+    return subprocess.Popen(
+        cmd,
+        cwd=folder_abs,
+        env=base_env,
+        **_SUBPROCESS_STDOUT_KWARGS,
+    )
 
 
 def call_with_retries(
@@ -429,67 +493,7 @@ def generate_log_parallel(script_names, env_extra=None):
             q.put({"folder": folder, "line": f"Script {folder}/{script} not found."})
             return
         q.put({"folder": folder, "line": f"Running {folder}/{script}..."})
-        if script == "A.4-ARTICLES.py":
-            bootstrap = r"""import os, sys, time, random, socket, runpy
-        import openai
-        _root = os.path.abspath(os.path.join(os.getcwd(), ".."))
-        if _root not in sys.path:
-            sys.path.insert(0, _root)
-        import openai_chat_compat
-        openai_chat_compat.install()
-
-        from openai import (
-            APIConnectionError,
-            APITimeoutError,
-            RateLimitError,
-            InternalServerError,
-            APIError,
-        )
-
-        _orig = openai.ChatCompletion.create
-        MAX_TRIES = int(os.getenv("OPENAI_RETRY_MAX_TRIES", "6"))
-        TIMEOUT = int(os.getenv("OPENAI_REQUEST_TIMEOUT", "180"))
-
-        def _retryable(e):
-            if isinstance(e, (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError, socket.timeout)):
-                return True
-            if isinstance(e, APIError):
-                code = getattr(e, "status_code", None) or getattr(e, "http_status", None)
-                return code in (500, 502, 503, 504)
-            return False
-
-        def _create_with_retry(*args, **kwargs):
-            if "request_timeout" not in kwargs:
-                kwargs["request_timeout"] = TIMEOUT
-
-            for attempt in range(1, MAX_TRIES + 1):
-                try:
-                    return _orig(*args, **kwargs)
-                except Exception as e:
-                    if not _retryable(e):
-                        raise
-                    wait = min(60, (2 ** (attempt - 1)) + random.random())
-                    print(f"[OpenAI Retry {attempt}/{MAX_TRIES}] {type(e).__name__}: {e} | waiting {wait:.1f}s...", flush=True)
-                    time.sleep(wait)
-
-            raise RuntimeError("OpenAI request failed after multiple retries.")
-
-        openai.ChatCompletion.create = _create_with_retry
-        runpy.run_path("A.4-ARTICLES.py", run_name="__main__")
-        """
-            proc = subprocess.Popen(
-                [sys.executable, "-u", "-c", bootstrap],
-                cwd=folder_abs,
-                env=base_env,
-                **_SUBPROCESS_STDOUT_KWARGS,
-            )
-        else:
-            proc = subprocess.Popen(
-                [sys.executable, "-u", script],
-                cwd=folder_abs,
-                env=base_env,
-                **_SUBPROCESS_STDOUT_KWARGS,
-            )
+        proc = _popen_pipeline_script(folder_abs, script, base_env)
 
         running_processes.append(proc)
         for line in proc.stdout:
@@ -553,12 +557,7 @@ def generate_log_imagine_all_grouped(env_extra=None):
                 continue
 
             q.put({"folder": folder, "line": f"[{label}] Running {folder}/{script}..."})
-            proc = subprocess.Popen(
-                [sys.executable, "-u", script],
-                cwd=folder_abs,
-                env=base_env,
-                **_SUBPROCESS_STDOUT_KWARGS,
-            )
+            proc = _popen_pipeline_script(folder_abs, script, base_env)
             running_processes.append(proc)
             for line in proc.stdout:
                 q.put({"folder": folder, "line": f"[{label}] " + line.rstrip()})
@@ -608,12 +607,7 @@ def generate_log_pool(script_names, max_concurrency=10, env_extra=None):
             q.put({"folder": folder, "line": f"Script {folder}/{script} not found (SKIPPED)."})
         else:
             q.put({"folder": folder, "line": f"Running {folder}/{script}..."})
-            proc = subprocess.Popen(
-                [sys.executable, "-u", script],
-                cwd=folder_abs,
-                env=base_env,
-                **_SUBPROCESS_STDOUT_KWARGS,
-            )
+            proc = _popen_pipeline_script(folder_abs, script, base_env)
 
             running_processes.append(proc)
             for line in proc.stdout:
@@ -677,12 +671,7 @@ def generate_log_in_batches(script_names, batch_size=3, env_extra=None):
             return
 
         q.put({"folder": folder, "line": f"Running {folder}/{script}..."})
-        proc = subprocess.Popen(
-            [sys.executable, "-u", script],
-            cwd=folder_abs,
-            env=base_env,
-            **_SUBPROCESS_STDOUT_KWARGS,
-        )
+        proc = _popen_pipeline_script(folder_abs, script, base_env)
         # stream output
         for line in proc.stdout:
             q.put({"folder": folder, "line": line.rstrip()})
@@ -905,10 +894,6 @@ def stream_all_pin_data():
         mimetype="text/event-stream"
     )
 
-
-from flask import Response, stream_with_context
-
-from flask import Response, stream_with_context
 
 @app.route("/stream-all-pin-image")
 def stream_all_pin_image():
