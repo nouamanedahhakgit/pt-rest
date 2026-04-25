@@ -4,6 +4,7 @@ import subprocess
 import threading
 import queue
 import json
+import re
 from flask import Flask, Response, request, jsonify, stream_with_context
 import openpyxl
 import openai
@@ -197,280 +198,313 @@ def chat_completion_with_retry(messages, model="gpt-4o-mini", **kwargs):
     )
 
 
-PROJECT_FOLDERS = [
-
-    "A1-Pinterest_01",
-    "A2-Pinterest_02",
-    "A3-Pinterest_03",
-    "A4-Pinterest_04",
-    "A5-Pinterest_05",
-    "A6-Pinterest_06",
-    "A7-Pinterest_07",
-    "A8-Pinterest_08",
-    "A9-Pinterest_09",
-    "A10-Pinterest_10",
-    "A11-Pinterest_11",
-    "A12-Pinterest_12",
-    "A13-Pinterest_13",
-    "A14-Pinterest_14",
-    "A15-Pinterest_15",
-    "A16-Pinterest_16",
-    "A17-Pinterest_17",
-    "A18-Pinterest_18",
-    "A19-Pinterest_19",
-    "A20-Pinterest_20",
-    "A21-Pinterest_21",
-    "A22-Pinterest_22",
-    "A23-Pinterest_23",
-    "A24-Pinterest_24",
-    "A25-Pinterest_25",
-    "A26-Pinterest_26",
-    "A27-Pinterest_27",
-    "A28-Pinterest_28",
-    "A29-Pinterest_29",
-    "A30-Pinterest_30",
-    "A31-Pinterest_31",
-    "A32-Pinterest_32",
-    "A33-Pinterest_33",
-    "A34-Pinterest_34",
-    "A35-Pinterest_35",
-    "A36-Pinterest_36",
-    "A37-Pinterest_37",
-    "A38-Pinterest_38",
-    "A39-Pinterest_39",
-    "A40-Pinterest_40",
-    "A41-Pinterest_41",
-    "A42-Pinterest_42",
-    "A43-Pinterest_43",
-    "A44-Pinterest_44",
-    "A45-Pinterest_45",
-    "A46-Pinterest_46",
-    "A47-Pinterest_47",
-    "A48-Pinterest_48",
-    "A49-Pinterest_49",
-    "A50-Pinterest_50",
-    "B1-Pinterest_51",
-    "B2-Pinterest_52",
-    "B3-Pinterest_53",
-    "B4-Pinterest_54",
-    "B5-Pinterest_55",
-    "B6-Pinterest_56",
-    "B7-Pinterest_57",
-    "B8-Pinterest_58",
-    "B9-Pinterest_59",
-    "B10-Pinterest_60",
-    "B11-Pinterest_61",
-    "B12-Pinterest_62",
-    "B13-Pinterest_63",
-    "B14-Pinterest_64",
-    "B15-Pinterest_65",
-    "B16-Pinterest_66",
-    "B17-Pinterest_67",
-    "B18-Pinterest_68",
-    "B19-Pinterest_69",
-    "B20-Pinterest_70",
-    "B21-Pinterest_71",
-    "B22-Pinterest_72",
-    "B23-Pinterest_73",
-    "B24-Pinterest_74",
-    "B25-Pinterest_75",
-    "B26-Pinterest_76",
-    "B27-Pinterest_77",
-    "B28-Pinterest_78",
-    "B29-Pinterest_79",
-    "B30-Pinterest_80",
-    "B31-Pinterest_81",
-    "B32-Pinterest_82",
-    "B33-Pinterest_83",
-    "B34-Pinterest_84",
-    "B35-Pinterest_85",
-    "B36-Pinterest_86",
-    "B37-Pinterest_87",
-    "B38-Pinterest_88",
-    "B39-Pinterest_89",
-    "B40-Pinterest_90",
-    "B41-Pinterest_91",
-    "B42-Pinterest_92",
-    "B43-Pinterest_93",
-    "B44-Pinterest_94",
-    "B45-Pinterest_95",
-    "B46-Pinterest_96",
-    "B47-Pinterest_97",
-    "B48-Pinterest_98",
-    "B49-Pinterest_99",
-    "B50-Pinterest_100",
-
-]
-
-IMAGINE_GROUP1 = [
-    "A1-Pinterest_01",
-    "A2-Pinterest_02",
-    "A3-Pinterest_03",
-
-]
-
-IMAGINE_GROUP2 = [
-    "A4-Pinterest_04",
-    "A5-Pinterest_05",
-    "A6-Pinterest_06",
-]
-
-IMAGINE_GROUP3 = [
-    "A7-Pinterest_07",
-    "A8-Pinterest_08",
-    "A9-Pinterest_09",
-]
-
-IMAGINE_GROUP4 = [
-    "A10-Pinterest_10",
-    "A11-Pinterest_11",
-    "A12-Pinterest_12",
-]
-
-IMAGINE_GROUP5 = [
-    "A13-Pinterest_13",
-    "A14-Pinterest_14",
-    "A15-Pinterest_15",
-
-]
-
-IMAGINE_GROUP6 = [
-    "A16-Pinterest_16",
-    "A17-Pinterest_17",
-    "A18-Pinterest_18",
-]
-
-IMAGINE_GROUP7 = [
-    "A19-Pinterest_19",
-    "A20-Pinterest_20",
-    "A21-Pinterest_21",
-]
-
-IMAGINE_GROUP8 = [
-    "A22-Pinterest_22",
-    "A23-Pinterest_23",
-    "A24-Pinterest_24",
-]
-
-IMAGINE_GROUP9 = [
-    "A25-Pinterest_25",
-    "A26-Pinterest_26",
-    "A27-Pinterest_27",
-]
-
-IMAGINE_GROUP10 = [
-    "A28-Pinterest_28",
-    "A29-Pinterest_29",
-    "A30-Pinterest_30",
-]
-
-IMAGINE_GROUP11 = [
-    "A31-Pinterest_31",
-    "A32-Pinterest_32",
-    "A33-Pinterest_33",
-]
-
-IMAGINE_GROUP12 = [
-    "A34-Pinterest_34",
-    "A35-Pinterest_35",
-    "A36-Pinterest_36",
-]
-
-IMAGINE_GROUP13 = [
-    "A37-Pinterest_37",
-    "A38-Pinterest_38",
-    "A39-Pinterest_39",
-]
-
-IMAGINE_GROUP14 = [
-    "A40-Pinterest_40",
-    "A41-Pinterest_41",
-    "A42-Pinterest_42",
-]
-
-IMAGINE_GROUP15 = [
-    "A43-Pinterest_43",
-    "A44-Pinterest_44",
-    "A45-Pinterest_45",
-]
-
-IMAGINE_GROUP16 = [
-    "A46-Pinterest_46",
-    "A47-Pinterest_47",
-    "A48-Pinterest_48",
-]
-
-IMAGINE_GROUP17 = [
-    "A49-Pinterest_49",
-    "A50-Pinterest_50",
-]
-
-# -------------------- IMAGINE ALL RANGES (by project index, 1-based) --------------------
-# هنا كتتحكم فالمجموعات ديال Imagine All
-# (1, 17) = المشاريع من 1 حتى 17 فـ PROJECT_FOLDERS
-# (18, 34) = من 18 حتى 34
-# (35, 50) = من 35 حتى 50
-IMAGINE_ALL_RANGES = [
-    (1, 34),
-    (35, 50),
-    # إلى بغيت تزيد مجموعة أخرى، غير زيد هنا:
-    # (51, 60),
-]
+# -------------------- Repo project discovery (unlimited) --------------------
+_APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+_APP_CONFIG = os.path.join(_APP_ROOT, "config")
+_SKIP_PROJECT_PARENTS = {".git", "ALL", "node_modules", "Save CSV", "__pycache__"}
 
 
-# -------------------- Specific projects for START2 functionality --------------------
-START2_PROJECTS = [
-    "B1-Pinterest_51",
-    "B2-Pinterest_52",
-    "B3-Pinterest_53",
-    "B4-Pinterest_54",
-    "B5-Pinterest_55",
-    "B6-Pinterest_56",
-    "B7-Pinterest_57",
-    "B8-Pinterest_58",
-    "B9-Pinterest_59",
-    "B10-Pinterest_60",
-    "B11-Pinterest_61",
-    "B12-Pinterest_62",
-    "B13-Pinterest_63",
-    "B14-Pinterest_64",
-    "B15-Pinterest_65",
-    "B16-Pinterest_66",
-    "B17-Pinterest_67",
-    "B18-Pinterest_68",
-    "B19-Pinterest_69",
-    "B20-Pinterest_70",
-    "B21-Pinterest_71",
-    "B22-Pinterest_72",
-    "B23-Pinterest_73",
-    "B24-Pinterest_74",
-    "B25-Pinterest_75",
-    "B26-Pinterest_76",
-    "B27-Pinterest_77",
-    "B28-Pinterest_78",
-    "B29-Pinterest_79",
-    "B30-Pinterest_80",
-    "B31-Pinterest_81",
-    "B32-Pinterest_82",
-    "B33-Pinterest_83",
-    "B34-Pinterest_84",
-    "B35-Pinterest_85",
-    "B36-Pinterest_86",
-    "B37-Pinterest_87",
-    "B38-Pinterest_88",
-    "B39-Pinterest_89",
-    "B40-Pinterest_90",
-    "B41-Pinterest_91",
-    "B42-Pinterest_92",
-    "B43-Pinterest_93",
-    "B44-Pinterest_94",
-    "B45-Pinterest_95",
-    "B46-Pinterest_96",
-    "B47-Pinterest_97",
-    "B48-Pinterest_98",
-    "B49-Pinterest_99",
-    "B50-Pinterest_100",
-]
+def _natural_sort_key(name: str):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
+
+
+def _is_pipeline_project(name: str) -> bool:
+    return os.path.isfile(os.path.join(_APP_ROOT, name, "A.1-START.py"))
+
+
+def _load_app_projects_file() -> dict:
+    path = os.path.join(_APP_CONFIG, "projects.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _load_sites_file_app() -> dict:
+    path = os.path.join(_APP_CONFIG, "sites.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _use_json_sites() -> bool:
+    s = _load_sites_file_app().get("sites")
+    return isinstance(s, list) and len(s) > 0
+
+
+def _pipeline_code_folder() -> str:
+    return (str(_load_sites_file_app().get("pipeline_code_folder") or "A1-Pinterest_01").strip() or "A1-Pinterest_01")
+
+
+def _safe_log_dom_id(s: str) -> str:
+    x = re.sub(r"[^a-zA-Z0-9_-]+", "_", (s or "").strip().strip("_"))
+    return x or "log"
+
+
+def _site_row_public_title(s: dict) -> str:
+    """Name shown in dashboard: A1-Pinterest_01, B1-Pinterest_51, …"""
+    t = s.get("display_name") or s.get("name") or s.get("id") or "site"
+    return str(t).strip()
+
+
+def flat_run_units() -> list:
+    """
+    One entry per 'project' the UI runs: either one row per real folder, or
+    (when config/sites.json has sites) one row per site using the same code folder.
+
+    - label: title for headers + ?project= (e.g. A1-Pinterest_01)
+    - log_id: safe id for #log_{log_id} and SSE routing (getElementById)
+    - env: PINTEREST_SITE_ID stays the internal `id` from JSON
+    """
+    if not _use_json_sites():
+        out = []
+        for f in PROJECT_FOLDERS:
+            out.append(
+                {
+                    "folder": f,
+                    "label": f,
+                    "log_id": _safe_log_dom_id(f),
+                    "env": {},
+                }
+            )
+        return out
+    root = _pipeline_code_folder()
+    root_path = os.path.join(_APP_ROOT, root)
+    if not os.path.isdir(root_path):
+        return [
+            {
+                "folder": f,
+                "label": f,
+                "log_id": _safe_log_dom_id(f),
+                "env": {},
+            }
+            for f in PROJECT_FOLDERS
+        ]
+    out = []
+    for s in _load_sites_file_app().get("sites", []):
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id", "")).strip()
+        if not sid:
+            continue
+        title = _site_row_public_title(s)
+        log_id = (str(s.get("log_id", "")).strip() or _safe_log_dom_id(title) or _safe_log_dom_id(sid))
+        out.append(
+            {
+                "folder": root,
+                "label": title,
+                "log_id": log_id,
+                "env": {"PINTEREST_SITE_ID": sid},
+            }
+        )
+    return out
+
+
+def all_out_name_for_label(label: str) -> str:
+    """ALL/<out_dir>/... — label can be display_name or id from sites.json."""
+    if _use_json_sites():
+        for s in _load_sites_file_app().get("sites", []):
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("id", "")).strip()
+            stitle = _site_row_public_title(s) if s else ""
+            if sid == label or stitle == label:
+                return (s.get("out_dir") or f"{s.get('id')}-out").strip()  # type: ignore[union-attr]
+    return f"{label}-out"
+
+
+def _normalize_script_jobs(script_names) -> list:
+    """
+    (folder, script) | (folder, script, env) | 4- or 5-tuple
+    -> (folder, script, env, log_id, line_label)
+    log_id: SSE "folder" key and #log_{log_id}
+    line_label: text in log lines
+    """
+    out = []
+    for item in script_names:
+        if len(item) == 2:
+            f, s = item[0], item[1]
+            out.append((f, s, {}, _safe_log_dom_id(f), f))
+        elif len(item) == 3:
+            f, s, e = item[0], item[1], item[2] or {}
+            line = f"{f}[{e.get('PINTEREST_SITE_ID')}]" if e.get("PINTEREST_SITE_ID") else f
+            out.append((f, s, e, _safe_log_dom_id(line), line))
+        elif len(item) == 4:
+            f, s, e, a = item[0], item[1], item[2] or {}, item[3]
+            out.append((f, s, e, _safe_log_dom_id(a), a))
+        else:
+            f, s, e, log_id, line_label = item[0], item[1], item[2] or {}, item[3], item[4]
+            out.append((f, s, e, log_id, line_label))
+    return out
+
+
+def jobs_for_script(script: str) -> list:
+    return [
+        (u["folder"], script, u.get("env") or {}, u["log_id"], u["label"])
+        for u in flat_run_units()
+    ]
+
+
+def jobs_for_imagine_unit_group(units: list) -> list:
+    return [
+        (u["folder"], "A.3-IMAGINE.py", u.get("env") or {}, u["log_id"], u["label"])
+        for u in (units or [])
+    ]
+
+
+def _unit_by_label(label: str):
+    for u in flat_run_units():
+        if u["label"] == label or u.get("log_id") == label:
+            return u
+    return None
+
+
+def flat_ui_labels() -> list:
+    return [u["label"] for u in flat_run_units()]
+
+
+def is_allowed_project_label(label: str) -> bool:
+    return any(u["label"] == label or u.get("log_id") == label for u in flat_run_units())
+
+
+def load_project_folders() -> list:
+    """
+    - If config/projects.json has non-empty "folders", use that order (only existing dirs).
+    - Otherwise every direct subfolder that contains A.1-START.py, sorted naturally.
+    """
+    pc = _load_app_projects_file()
+    explicit = pc.get("folders")
+    if isinstance(explicit, list) and len(explicit) > 0:
+        return [f for f in explicit if f and os.path.isdir(os.path.join(_APP_ROOT, f))]
+    names: list = []
+    for name in os.listdir(_APP_ROOT):
+        if name in _SKIP_PROJECT_PARENTS or name.startswith("."):
+            continue
+        p = os.path.join(_APP_ROOT, name)
+        if not os.path.isdir(p):
+            continue
+        if not _is_pipeline_project(name):
+            continue
+        names.append(name)
+    names.sort(key=_natural_sort_key)
+    return names
+
+
+def _split_folder_groups(folders: list, n: int) -> list:
+    """Split `folders` into n consecutive index ranges (n UI slots); sizes differ by at most 1."""
+    L = len(folders)
+    if n <= 0:
+        return []
+    if L == 0:
+        return [[] for _ in range(n)]
+    base, rem = divmod(L, n)
+    out, start = [], 0
+    for i in range(n):
+        sz = base + (1 if i < rem else 0)
+        out.append(folders[start : start + sz])
+        start += sz
+    return out
+
+
+def _split_unit_groups(units: list, n: int) -> list:
+    """Like _split_folder_groups but each chunk is a list of run-unit dicts."""
+    L = len(units)
+    if n <= 0:
+        return []
+    if L == 0:
+        return [[] for _ in range(n)]
+    base, rem = divmod(L, n)
+    out, start = [], 0
+    for i in range(n):
+        sz = base + (1 if i < rem else 0)
+        out.append(units[start : start + sz])
+        start += sz
+    return out
+
+
+PROJECT_FOLDERS = load_project_folders()
+if not PROJECT_FOLDERS and os.path.isdir(os.path.join(_APP_ROOT, "A1-Pinterest_01")):
+    PROJECT_FOLDERS = ["A1-Pinterest_01"]
+
+_PC = _load_app_projects_file()
+_s2 = _PC.get("start2_folders")
+if isinstance(_s2, list):
+    START2_PROJECTS = [x for x in _s2 if isinstance(x, str) and x]
+else:
+    START2_PROJECTS = []
+
+
+def _unit_in_start2_list(u: dict) -> bool:
+    s2 = set(START2_PROJECTS)
+    if not s2:
+        return False
+    if u.get("label") in s2 or u.get("log_id") in s2:
+        return True
+    sid = (u.get("env") or {}).get("PINTEREST_SITE_ID", "")
+    return sid in s2
+
+
+def jobs_for_start1_all_except_s2() -> list:
+    o = []
+    for u in flat_run_units():
+        if _unit_in_start2_list(u):
+            continue
+        o.append(
+            (u["folder"], "A.1-START.py", u.get("env") or {}, u["log_id"], u["label"])
+        )
+    return o
+
+
+def jobs_for_start2_only() -> list:
+    return [
+        (u["folder"], "A.1-START.py", u.get("env") or {}, u["log_id"], u["label"])
+        for u in flat_run_units()
+        if _unit_in_start2_list(u)
+    ]
+
+
+FLAT_UNITS = flat_run_units()
+IMAGINE_NUM_GROUPS = int(_PC.get("imagine_num_groups", 17))
+IMAGINE_SLOT_GROUPS = _split_unit_groups(FLAT_UNITS, IMAGINE_NUM_GROUPS)
+# stream-imagine-group1 … = slots of sites (or folders) in order
+IMAGINE_GROUP1 = IMAGINE_SLOT_GROUPS[0] if len(IMAGINE_SLOT_GROUPS) > 0 else []
+IMAGINE_GROUP2 = IMAGINE_SLOT_GROUPS[1] if len(IMAGINE_SLOT_GROUPS) > 1 else []
+IMAGINE_GROUP3 = IMAGINE_SLOT_GROUPS[2] if len(IMAGINE_SLOT_GROUPS) > 2 else []
+IMAGINE_GROUP4 = IMAGINE_SLOT_GROUPS[3] if len(IMAGINE_SLOT_GROUPS) > 3 else []
+IMAGINE_GROUP5 = IMAGINE_SLOT_GROUPS[4] if len(IMAGINE_SLOT_GROUPS) > 4 else []
+IMAGINE_GROUP6 = IMAGINE_SLOT_GROUPS[5] if len(IMAGINE_SLOT_GROUPS) > 5 else []
+IMAGINE_GROUP7 = IMAGINE_SLOT_GROUPS[6] if len(IMAGINE_SLOT_GROUPS) > 6 else []
+IMAGINE_GROUP8 = IMAGINE_SLOT_GROUPS[7] if len(IMAGINE_SLOT_GROUPS) > 7 else []
+IMAGINE_GROUP9 = IMAGINE_SLOT_GROUPS[8] if len(IMAGINE_SLOT_GROUPS) > 8 else []
+IMAGINE_GROUP10 = IMAGINE_SLOT_GROUPS[9] if len(IMAGINE_SLOT_GROUPS) > 9 else []
+IMAGINE_GROUP11 = IMAGINE_SLOT_GROUPS[10] if len(IMAGINE_SLOT_GROUPS) > 10 else []
+IMAGINE_GROUP12 = IMAGINE_SLOT_GROUPS[11] if len(IMAGINE_SLOT_GROUPS) > 11 else []
+IMAGINE_GROUP13 = IMAGINE_SLOT_GROUPS[12] if len(IMAGINE_SLOT_GROUPS) > 12 else []
+IMAGINE_GROUP14 = IMAGINE_SLOT_GROUPS[13] if len(IMAGINE_SLOT_GROUPS) > 13 else []
+IMAGINE_GROUP15 = IMAGINE_SLOT_GROUPS[14] if len(IMAGINE_SLOT_GROUPS) > 14 else []
+IMAGINE_GROUP16 = IMAGINE_SLOT_GROUPS[15] if len(IMAGINE_SLOT_GROUPS) > 15 else []
+IMAGINE_GROUP17 = IMAGINE_SLOT_GROUPS[16] if len(IMAGINE_SLOT_GROUPS) > 16 else []
+_tuples = _PC.get("imagine_all_ranges")
+if isinstance(_tuples, list) and _tuples:
+    IMAGINE_ALL_RANGES = [tuple(x) for x in _tuples]  # type: ignore
+else:
+    _n = len(FLAT_UNITS)
+    if _n <= 0:
+        IMAGINE_ALL_RANGES = []
+    elif _n == 1:
+        IMAGINE_ALL_RANGES = [(1, 1)]
+    else:
+        _mid = (_n + 1) // 2
+        IMAGINE_ALL_RANGES = [(1, _mid), (_mid + 1, _n)]
 
 # -------------------- Global list to track running subprocesses --------------------
 running_processes = []
@@ -481,33 +515,43 @@ def generate_log_parallel(script_names, env_extra=None):
     """
     Runs scripts concurrently in separate threads and yields SSE log lines.
     (No concurrency cap)
+    script_names: list of 2- to 5-tuples; final form (folder, script, env, log_id, line_label).
     """
     q = queue.Queue()
     threads = []
     base_env = _subprocess_env(env_extra)
+    jobs = _normalize_script_jobs(script_names)
 
-    def run_process(folder, script):
+    def run_process(folder, script, job_env, log_id, line_label):
         folder_abs = os.path.join(os.getcwd(), folder)
         script_path = os.path.join(folder_abs, script)
         if not os.path.exists(script_path):
-            q.put({"folder": folder, "line": f"Script {folder}/{script} not found."})
+            q.put(
+                {
+                    "folder": log_id,
+                    "line": f"Script {line_label}/{script} not found.",
+                }
+            )
             return
-        q.put({"folder": folder, "line": f"Running {folder}/{script}..."})
-        proc = _popen_pipeline_script(folder_abs, script, base_env)
+        be = {**base_env, **(job_env or {})}
+        q.put({"folder": log_id, "line": f"Running {line_label}/{script}..."})
+        proc = _popen_pipeline_script(folder_abs, script, be)
 
         running_processes.append(proc)
         for line in proc.stdout:
-            q.put({"folder": folder, "line": line.rstrip()})
+            q.put({"folder": log_id, "line": line.rstrip()})
         proc.stdout.close()
         proc.wait()
         try:
             running_processes.remove(proc)
         except ValueError:
             pass
-        q.put({"folder": folder, "line": f"Finished {folder}/{script}"})
+        q.put({"folder": log_id, "line": f"Finished {line_label}/{script}"})
 
-    for folder, script in script_names:
-        t = threading.Thread(target=run_process, args=(folder, script))
+    for folder, script, job_env, log_id, line_label in jobs:
+        t = threading.Thread(
+            target=run_process, args=(folder, script, job_env, log_id, line_label)
+        )
         t.start()
         threads.append(t)
 
@@ -533,41 +577,53 @@ def generate_log_imagine_all_grouped(env_extra=None):
     # نحضرو اللوائح ديال الفولدرات لكل مجموعة
     groups = []
     for i, (start_idx_1, end_idx_1) in enumerate(IMAGINE_ALL_RANGES, start=1):
-        # نصححو البدايات والنهايات باش مانخرجوش من PROJECT_FOLDERS
         start_idx_1 = max(1, start_idx_1)
-        end_idx_1 = min(len(PROJECT_FOLDERS), end_idx_1)
+        end_idx_1 = min(len(FLAT_UNITS), end_idx_1)
         if start_idx_1 > end_idx_1:
             continue
-        # نحولوه ل 0-based indices
         start0 = start_idx_1 - 1
         end0 = end_idx_1
-        folders = PROJECT_FOLDERS[start0:end0]
-        if not folders:
+        uchunk = FLAT_UNITS[start0:end0]
+        if not uchunk:
             continue
         label = f"Group {i} ({start_idx_1}-{end_idx_1})"
-        groups.append((label, folders))
+        groups.append((label, uchunk))
 
-    def run_group(label, folders):
-        for folder in folders:
+    def run_group(label, units):
+        for unit in units:
             script = "A.3-IMAGINE.py"
+            folder = unit["folder"]
+            job_env = {**base_env, **(unit.get("env") or {})}
+            line_label = unit.get("label", folder)
+            log_id = unit.get("log_id", _safe_log_dom_id(line_label))
             folder_abs = os.path.join(os.getcwd(), folder)
             script_path = os.path.join(folder_abs, script)
             if not os.path.exists(script_path):
-                q.put({"folder": folder, "line": f"[{label}] Script {folder}/{script} not found."})
+                q.put(
+                    {
+                        "folder": log_id,
+                        "line": f"[{label}] Script {line_label}/{script} not found.",
+                    }
+                )
                 continue
 
-            q.put({"folder": folder, "line": f"[{label}] Running {folder}/{script}..."})
-            proc = _popen_pipeline_script(folder_abs, script, base_env)
+            q.put({"folder": log_id, "line": f"[{label}] Running {line_label}/{script}..."})
+            proc = _popen_pipeline_script(folder_abs, script, job_env)
             running_processes.append(proc)
             for line in proc.stdout:
-                q.put({"folder": folder, "line": f"[{label}] " + line.rstrip()})
+                q.put({"folder": log_id, "line": f"[{label}] " + line.rstrip()})
             proc.stdout.close()
             proc.wait()
             try:
                 running_processes.remove(proc)
             except ValueError:
                 pass
-            q.put({"folder": folder, "line": f"[{label}] Finished {folder}/{script} (exit={proc.returncode})."})
+            q.put(
+                {
+                    "folder": log_id,
+                    "line": f"[{label}] Finished {line_label}/{script} (exit={proc.returncode}).",
+                }
+            )
 
         q.put({"folder": "all", "line": f"[{label}] Finished all projects in this group."})
 
@@ -596,45 +652,55 @@ def generate_log_pool(script_names, max_concurrency=10, env_extra=None):
     """
     q = queue.Queue()
     lock = threading.Lock()
-    scripts_iter = iter(script_names)
+    job_list = _normalize_script_jobs(script_names)
+    scripts_iter = iter(job_list)
     active_threads = []
     base_env = _subprocess_env(env_extra)
 
-    def run_process(folder, script):
+    def run_process(folder, script, job_env, log_id, line_label):
         folder_abs = os.path.join(os.getcwd(), folder)
         script_path = os.path.join(folder_abs, script)
         if not os.path.exists(script_path):
-            q.put({"folder": folder, "line": f"Script {folder}/{script} not found (SKIPPED)."})
+            q.put(
+                {
+                    "folder": log_id,
+                    "line": f"Script {line_label}/{script} not found (SKIPPED).",
+                }
+            )
         else:
-            q.put({"folder": folder, "line": f"Running {folder}/{script}..."})
-            proc = _popen_pipeline_script(folder_abs, script, base_env)
+            be = {**base_env, **(job_env or {})}
+            q.put({"folder": log_id, "line": f"Running {line_label}/{script}..."})
+            proc = _popen_pipeline_script(folder_abs, script, be)
 
             running_processes.append(proc)
             for line in proc.stdout:
-                q.put({"folder": folder, "line": line.rstrip()})
+                q.put({"folder": log_id, "line": line.rstrip()})
             proc.stdout.close()
             proc.wait()
             try:
                 running_processes.remove(proc)
             except ValueError:
                 pass
-            q.put({"folder": folder, "line": f"Finished {folder}/{script}"})
+            q.put({"folder": log_id, "line": f"Finished {line_label}/{script}"})
 
         # refill slot
         with lock:
             try:
-                next_folder, next_script = next(scripts_iter)
-                t = threading.Thread(target=run_process, args=(next_folder, next_script))
+                nxt = next(scripts_iter)
+                t = threading.Thread(
+                    target=run_process,
+                    args=(nxt[0], nxt[1], nxt[2], nxt[3], nxt[4]),
+                )
                 t.start()
                 active_threads.append(t)
             except StopIteration:
                 pass
 
     # prime pool
-    for _ in range(min(max_concurrency, len(script_names))):
+    for _ in range(min(max_concurrency, len(job_list))):
         try:
-            folder, script = next(scripts_iter)
-            t = threading.Thread(target=run_process, args=(folder, script))
+            f, s, e, lid, llab = next(scripts_iter)
+            t = threading.Thread(target=run_process, args=(f, s, e, lid, llab))
             t.start()
             active_threads.append(t)
         except StopIteration:
@@ -662,22 +728,34 @@ def generate_log_in_batches(script_names, batch_size=3, env_extra=None):
     """
     q = queue.Queue()
     base_env = _subprocess_env(env_extra)
+    job_list = _normalize_script_jobs(script_names)
 
-    def run_process(folder, script):
+    def run_process(folder, script, job_env, log_id, line_label):
         folder_abs = os.path.join(os.getcwd(), folder)
         script_path = os.path.join(folder_abs, script)
         if not os.path.exists(script_path):
-            q.put({"folder": folder, "line": f"Script {folder}/{script} not found."})
+            q.put(
+                {
+                    "folder": log_id,
+                    "line": f"Script {line_label}/{script} not found.",
+                }
+            )
             return
 
-        q.put({"folder": folder, "line": f"Running {folder}/{script}..."})
-        proc = _popen_pipeline_script(folder_abs, script, base_env)
+        be = {**base_env, **(job_env or {})}
+        q.put({"folder": log_id, "line": f"Running {line_label}/{script}..."})
+        proc = _popen_pipeline_script(folder_abs, script, be)
         # stream output
         for line in proc.stdout:
-            q.put({"folder": folder, "line": line.rstrip()})
+            q.put({"folder": log_id, "line": line.rstrip()})
         proc.stdout.close()
         proc.wait()
-        q.put({"folder": folder, "line": f"Finished {folder}/{script} (exit={proc.returncode})."})
+        q.put(
+            {
+                "folder": log_id,
+                "line": f"Finished {line_label}/{script} (exit={proc.returncode}).",
+            }
+        )
 
     # Helper: chunk list into batches
     def chunked(seq, n):
@@ -686,11 +764,13 @@ def generate_log_in_batches(script_names, batch_size=3, env_extra=None):
 
     threads = []
     # Process by batches
-    for batch in chunked(list(script_names), batch_size):
+    for batch in chunked(list(job_list), batch_size):
         # start a batch
         batch_threads = []
-        for folder, script in batch:
-            t = threading.Thread(target=run_process, args=(folder, script), daemon=True)
+        for f, s, e, lid, llab in batch:
+            t = threading.Thread(
+                target=run_process, args=(f, s, e, lid, llab), daemon=True
+            )
             t.start()
             batch_threads.append(t)
             threads.append(t)
@@ -721,19 +801,22 @@ def generate_log_in_batches(script_names, batch_size=3, env_extra=None):
 
 @app.route("/stream-all-start")
 def stream_all_start():
-    scripts_to_run = [(folder, "A.1-START.py") for folder in PROJECT_FOLDERS if folder not in START2_PROJECTS]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_start1_all_except_s2()), mimetype="text/event-stream"
+    )
 
 
 
 @app.route("/stream-all-prompt")
 def stream_all_prompt():
-    scripts_to_run = [(folder, "A.2-PROMPT.py") for folder in PROJECT_FOLDERS]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_script("A.2-PROMPT.py")),
+        mimetype="text/event-stream",
+    )
 
 @app.route("/stream-all-json")
 def stream_all_json():
-    scripts_to_run = [(folder, "A.2-JSON.py") for folder in PROJECT_FOLDERS]
+    scripts_to_run = jobs_for_script("A.2-JSON.py")
 
     # باش نعطيك Done X/Y
     total = len(scripts_to_run)
@@ -769,110 +852,144 @@ def stream_imagine_all():
 
 @app.route("/stream-imagine-group1")
 def stream_imagine_group1():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP1]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP1)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group2")
 def stream_imagine_group2():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP2]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP2)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group3")
 def stream_imagine_group3():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP3]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP3)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group4")
 def stream_imagine_group4():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP4]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP4)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group5")
 def stream_imagine_group5():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP5]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP5)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group6")
 def stream_imagine_group6():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP6]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP6)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group7")
 def stream_imagine_group7():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP7]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP7)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group8")
 def stream_imagine_group8():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP8]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP8)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group9")
 def stream_imagine_group9():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP9]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP9)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group10")
 def stream_imagine_group10():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP10]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP10)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group11")
 def stream_imagine_group11():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP11]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP11)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group12")
 def stream_imagine_group12():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP12]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP12)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group13")
 def stream_imagine_group13():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP13]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP13)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group14")
 def stream_imagine_group14():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP14]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP14)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group15")
 def stream_imagine_group15():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP15]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP15)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group16")
 def stream_imagine_group16():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP16]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP16)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/stream-imagine-group17")
 def stream_imagine_group17():
-    scripts_to_run = [(folder, "A.3-IMAGINE.py") for folder in IMAGINE_GROUP17]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_imagine_unit_group(IMAGINE_GROUP17)),
+        mimetype="text/event-stream",
+    )
 
 
 # -------------------- UPDATED: Articles (pool 10 ب 10) --------------------
 @app.route("/stream-all-article")
 def stream_all_article():
-    scripts_to_run = [(folder, "A.4-ARTICLES.py") for folder in PROJECT_FOLDERS]
+    scripts_to_run = jobs_for_script("A.4-ARTICLES.py")
     return Response(
         generate_log_pool(scripts_to_run, max_concurrency=10),
         mimetype="text/event-stream"
@@ -887,7 +1004,7 @@ def stream_all_pin_data():
     باش السكريبت ديال PIN DATA يتخطّى الصفوف العامرة وميرجعش يعاود لها.
     خاصك تزاد سنيبت فـ A.5-PIN DATA.py (أسفل) باش يفعل هاد السلوك.
     """
-    scripts_to_run = [(folder, "A.5-PIN DATA.py") for folder in PROJECT_FOLDERS]
+    scripts_to_run = jobs_for_script("A.5-PIN DATA.py")
     env_extra = {"PIN_SKIP_EXISTING": "1"}
     return Response(
         generate_log_pool(scripts_to_run, max_concurrency=10, env_extra=env_extra),
@@ -898,7 +1015,8 @@ def stream_all_pin_data():
 @app.route("/stream-all-pin-image")
 def stream_all_pin_image():
     BATCH_SIZE = 5
-    total = len(PROJECT_FOLDERS)
+    _units = flat_run_units()
+    total = len(_units)
 
     @stream_with_context
     def stream():
@@ -906,13 +1024,16 @@ def stream_all_pin_image():
         yield f"data: 🚀 Starting Pin Image for {total} folders (batch={BATCH_SIZE})\n\n"
 
         for i in range(0, total, BATCH_SIZE):
-            batch_folders = PROJECT_FOLDERS[i:i + BATCH_SIZE]
+            batch_u = _units[i : i + BATCH_SIZE]
             start = i + 1
-            end = i + len(batch_folders)
+            end = i + len(batch_u)
 
             yield f"data: 🚀 Batch {start}-{end} / {total}\n\n"
 
-            scripts_to_run = [(folder, "A.6-PIN IMAGES.py") for folder in batch_folders]
+            scripts_to_run = [
+                (u["folder"], "A.6-PIN IMAGES.py", u.get("env") or {}, u["log_id"], u["label"])
+                for u in batch_u
+            ]
 
             # run this batch
             for line in generate_log_parallel(scripts_to_run):
@@ -921,7 +1042,7 @@ def stream_all_pin_image():
                     continue
                 yield line
 
-            done += len(batch_folders)
+            done += len(batch_u)
             yield f"data: ✅ Done {done}/{total}\n\n"
 
         # ✅ رسالة نهاية واحدة فقط فالأخير
@@ -941,15 +1062,18 @@ def stream_all_pin_image():
 
 @app.route("/stream-all-pin-bulk")
 def stream_all_pin_bulk():
-    scripts_to_run = [(folder, "A.8-PIN BULK.py") for folder in PROJECT_FOLDERS]
-    return Response(generate_log_parallel(scripts_to_run), mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_script("A.8-PIN BULK.py")),
+        mimetype="text/event-stream",
+    )
 
 
 # -------------------- Stream Endpoint for START2 --------------------
 @app.route("/stream_start2")
 def stream_start2():
-    scripts_to_run = [(folder, "A.1-START.py") for folder in START2_PROJECTS]
-    return Response(generate_log_parallel(scripts_to_run),mimetype="text/event-stream")
+    return Response(
+        generate_log_parallel(jobs_for_start2_only()), mimetype="text/event-stream"
+    )
 
 
 # -------------------- Stream Endpoint for Single Project Actions --------------------
@@ -980,15 +1104,29 @@ def stream_single():
     if not script:
         return Response("Invalid action", status=400)
 
-    # single run; هنا بلا env_extra. إذا بغيت skip هنا أيضاً، زِد env_extra={"PIN_SKIP_EXISTING":"1"}
-    return Response(generate_log_parallel([(project, script)]), mimetype="text/event-stream")
+    u = _unit_by_label(project)
+    if not u:
+        return Response("Unknown project", status=404)
+    return Response(
+        generate_log_parallel(
+            [
+                (
+                    u["folder"],
+                    script,
+                    u.get("env") or {},
+                    u["log_id"],
+                    u["label"],
+                )
+            ]
+        ),
+        mimetype="text/event-stream",
+    )
 
 # -------------------- WP UPLOAD (pool 10 ب 10) --------------------
 @app.route("/stream-all-wp-upload")
 def stream_all_wp_upload():
-    scripts_to_run = [(folder, "A.7-WP UPLOAD.py") for folder in PROJECT_FOLDERS]
     return Response(
-        generate_log_pool(scripts_to_run, max_concurrency=10),
+        generate_log_pool(jobs_for_script("A.7-WP UPLOAD.py"), max_concurrency=10),
         mimetype="text/event-stream"
     )
 
@@ -1292,8 +1430,8 @@ def clear_failed():
     إذا كاين غير واحد فيهم، خدام. إذا جوج ما كاينينش كيرجع رسالة مناسبة.
     """
     results = {}
-    for project in PROJECT_FOLDERS:
-        out_folder = f"{project}-out"
+    for project in flat_ui_labels():
+        out_folder = all_out_name_for_label(project)
         file_path = os.path.join(os.getcwd(), "ALL", out_folder, "images.xlsx")
 
         if not os.path.exists(file_path):
@@ -1415,8 +1553,10 @@ def manage_images():
         <div class="row row-cols-1 row-cols-md-2 g-4">
     """
 
-    for project in PROJECT_FOLDERS:
-        file_path = os.path.join(os.getcwd(), "ALL", f"{project}-out", "images.xlsx")
+    for project in flat_ui_labels():
+        file_path = os.path.join(
+            os.getcwd(), "ALL", all_out_name_for_label(project), "images.xlsx"
+        )
         if not os.path.exists(file_path):
             html += f"""
             <div class="col">
@@ -1577,8 +1717,10 @@ def manage_articles():
         <div class="row row-cols-1 g-4">
     """
 
-    for project in PROJECT_FOLDERS:
-        path = os.path.join(os.getcwd(), "ALL", f"{project}-out", "ARTICLE.xlsx")
+    for project in flat_ui_labels():
+        path = os.path.join(
+            os.getcwd(), "ALL", all_out_name_for_label(project), "ARTICLE.xlsx"
+        )
         if not os.path.exists(path):
             html += f"""
             <div class="col">
@@ -1662,9 +1804,11 @@ def delete_article_blanks():
         "article", "pinterest_title", "pinterest_description",
         "pinterest_image_short_title", "category", "pinterest_image"
     ]
-    if project not in PROJECT_FOLDERS:
+    if not is_allowed_project_label(project):
         return f"<h1>Invalid project: {project}</h1><a href='/manage_articles'>Back</a>"
-    path = os.path.join(os.getcwd(), "ALL", f"{project}-out", "ARTICLE.xlsx")
+    path = os.path.join(
+        os.getcwd(), "ALL", all_out_name_for_label(project), "ARTICLE.xlsx"
+    )
     if not os.path.exists(path):
         return f"<h1>ARTICLE.xlsx not found for {project}</h1><a href='/manage_articles'>Back</a>"
 
@@ -1698,8 +1842,10 @@ def delete_all_article_blanks():
         "pinterest_image_short_title", "category", "pinterest_image"
     ]
     summary = []
-    for project in PROJECT_FOLDERS:
-        path = os.path.join(os.getcwd(), "ALL", f"{project}-out", "ARTICLE.xlsx")
+    for project in flat_ui_labels():
+        path = os.path.join(
+            os.getcwd(), "ALL", all_out_name_for_label(project), "ARTICLE.xlsx"
+        )
         if not os.path.exists(path):
             summary.append(f"{project}: file not found")
             continue
@@ -1736,7 +1882,7 @@ def delete_image_row():
     if not project or not row_number_str:
         return "<h1>Missing project/row_number</h1><a href='/manage_images'>Back</a>"
 
-    if project not in PROJECT_FOLDERS:
+    if not is_allowed_project_label(project):
         return f"<h1>Invalid project: {project}</h1><a href='/manage_images'>Back</a>"
 
     try:
@@ -1744,7 +1890,9 @@ def delete_image_row():
     except:
         return "<h1>Invalid row_number</h1><a href='/manage_images'>Back</a>"
 
-    file_path = os.path.join(os.getcwd(), "ALL", f"{project}-out", "images.xlsx")
+    file_path = os.path.join(
+        os.getcwd(), "ALL", all_out_name_for_label(project), "images.xlsx"
+    )
     if not os.path.exists(file_path):
         return f"<h1>images.xlsx not found for {project}</h1><a href='/manage_images'>Back</a>"
 
@@ -1769,27 +1917,32 @@ def index():
     else:
         num_xlsx = 0
 
-    project_folders_json = json.dumps(PROJECT_FOLDERS)
+    _units = flat_run_units()
+    project_folders_json = json.dumps([u["log_id"] for u in _units])
 
     log_boxes = ""
-    for folder in PROJECT_FOLDERS:
+    for u in _units:
+        lid = u["log_id"]
+        title = u["label"]
+        lidj = json.dumps(lid)
+        titlej = json.dumps(title)
         log_boxes += f"""
           <div class="col-lg-6 mb-4">
             <div class="card h-100">
               <div class="card-header">
-                <h6 class="mb-0 text-secondary">{folder} Log</h6>
+                <h6 class="mb-0 text-secondary">{title} Log</h6>
               </div>
-              <div class="card-body overflow-auto" style="height:200px;" id="log_{folder}"></div>
+              <div class="card-body overflow-auto" style="height:200px;" id="log_{lid}"></div>
               <div class="card-footer">
-                <button class="btn btn-sm btn-info project-action" <button class="btn btn-sm btn-primary project-action" onclick="startProjectAction('{folder}', 'start', this)">START</button>
-                <button class="btn btn-sm btn-secondary project-action" onclick="startProjectAction('{folder}', 'json', this)">JSON</button>
-                <button class="btn btn-sm btn-warning project-action" onclick="startProjectAction('{folder}', 'prompt', this)">PROMPT</button>
-                <button class="btn btn-sm btn-info project-action" onclick="startProjectAction('{folder}', 'imagine', this)">IMAGINE</button>
-                <button class="btn btn-sm btn-success project-action" onclick="startProjectAction('{folder}', 'article', this)">ARTICLE</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction('{folder}', 'pin_data', this)">PIN DATA</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction('{folder}', 'pin_image', this)">PIN IMAGE</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction('{folder}', 'wp_upload', this)">WP UPLOAD</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction('{folder}', 'pin_bulk', this)">PIN BULK</button>
+                <button class="btn btn-sm btn-primary project-action" onclick="startProjectAction({lidj}, {titlej}, 'start', this)">START</button>
+                <button class="btn btn-sm btn-secondary project-action" onclick="startProjectAction({lidj}, {titlej}, 'json', this)">JSON</button>
+                <button class="btn btn-sm btn-warning project-action" onclick="startProjectAction({lidj}, {titlej}, 'prompt', this)">PROMPT</button>
+                <button class="btn btn-sm btn-info project-action" onclick="startProjectAction({lidj}, {titlej}, 'imagine', this)">IMAGINE</button>
+                <button class="btn btn-sm btn-success project-action" onclick="startProjectAction({lidj}, {titlej}, 'article', this)">ARTICLE</button>
+                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'pin_data', this)">PIN DATA</button>
+                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'pin_image', this)">PIN IMAGE</button>
+                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'wp_upload', this)">WP UPLOAD</button>
+                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'pin_bulk', this)">PIN BULK</button>
               </div>
             </div>
           </div>
@@ -2096,18 +2249,19 @@ def index():
         }}
 
         var projectStreams = {{}};
-        function startProjectAction(project, action, btn) {{
-          if(projectStreams[project]) {{ return; }}
+        function startProjectAction(logId, projectLabel, action, btn) {{
+          if(projectStreams[logId]) {{ return; }}
           var card = btn.closest('.card');
           var buttons = card.querySelectorAll('button.project-action');
           buttons.forEach(function(b) {{ b.disabled = true; }});
-          var endpoint = `/stream-single?project=${{project}}&action=${{action}}`;
-          var source = new EventSource(endpoint);
-          projectStreams[project] = source;
+          var ep = "/stream-single?project=" + encodeURIComponent(projectLabel) + "&action=" + encodeURIComponent(action);
+          var source = new EventSource(ep);
+          projectStreams[logId] = source;
           source.onmessage = function(e) {{
             try {{
               let data = JSON.parse(e.data);
-              let logDiv = document.getElementById("log_" + project);
+              let logDiv = document.getElementById("log_" + data.folder);
+              if (!logDiv) logDiv = document.getElementById("log_" + logId);
               if(logDiv) {{
                 if(data.line.includes("Finished")) {{
                   logDiv.innerHTML += "<span style='color: green;'>" + data.line + "</span><br>";
@@ -2118,7 +2272,7 @@ def index():
               }}
               if(data.line.includes("Finished")) {{
                 source.close();
-                delete projectStreams[project];
+                delete projectStreams[logId];
                 buttons.forEach(function(b) {{ b.disabled = false; }});
               }}
             }} catch(err) {{
@@ -2128,7 +2282,7 @@ def index():
           source.onerror = function(err) {{
             console.error("Project EventSource error:", err);
             source.close();
-            delete projectStreams[project];
+            delete projectStreams[logId];
             buttons.forEach(function(b) {{ b.disabled = false; }});
           }};
         }}

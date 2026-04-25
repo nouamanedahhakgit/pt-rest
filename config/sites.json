@@ -1,0 +1,22 @@
+{
+  "pipeline_code_folder": "A1-Pinterest_01",
+  "sites": [
+    {
+      "id": "p01",
+      "display_name": "A1-Pinterest_01",
+      "out_dir": "A1-Pinterest_01-out",
+      "wordpress_url": "https://example-1.com",
+      "wordpress_user": "user1",
+      "wordpress_app_password": "app-password-1"
+    },
+    {
+      "id": "p02",
+      "display_name": "A2-Pinterest_02",
+      "out_dir": "A2-Pinterest_02-out",
+      "wordpress_url": "https://example-2.com",
+      "wordpress_user": "user1",
+      "wordpress_app_password": "app-password-2"
+    }
+    
+  ]
+}

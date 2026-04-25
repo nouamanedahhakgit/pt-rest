@@ -87,8 +87,8 @@ r2 = boto3.client(
 # =============================
 # Paths
 # =============================
-input_excel = os.path.join(_REPO_ROOT, "ALL", "A1-Pinterest_01-out", "Recipes.xlsx")
-output_excel = os.path.join(_REPO_ROOT, "ALL", "A1-Pinterest_01-out", "images.xlsx")
+input_excel = a1_config.all_output_join("Recipes.xlsx")
+output_excel = a1_config.all_output_join("images.xlsx")
 
 # =============================
 # Processing & Polling settings

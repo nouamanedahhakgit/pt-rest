@@ -292,6 +292,5 @@ def process_recipes(input_file_path, output_file_path):
 # Run
 # ================================
 if __name__ == "__main__":
-    from pathlib import Path
-    all_out = Path(_REPO_ROOT) / "ALL" / "A1-Pinterest_01-out" / "Recipes.xlsx"
+    all_out = a1_config.all_output_join("Recipes.xlsx")
     process_recipes(str(all_out), str(all_out))

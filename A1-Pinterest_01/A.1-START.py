@@ -184,9 +184,9 @@ def process_titles_to_recipes(input_file_path: str, output_file_path: str):
 # Run
 # ================================
 if __name__ == "__main__":
-    # Paths from repo root (work whether cwd is A1 or PINTEREST)
-    input_file_path = os.path.join(_REPO_ROOT, "STARTS", "START1.xlsx")
-    output_file_path = os.path.join(_REPO_ROOT, "ALL", "A1-Pinterest_01-out", "Recipes.xlsx")
+    # Paths: titles from STARTS/ (see a1_config.resolve_start_titles_excel); output under ALL/{site out}/
+    input_file_path = a1_config.resolve_start_titles_excel()
+    output_file_path = a1_config.all_output_join("Recipes.xlsx")
     if not os.path.isfile(input_file_path):
         print(f"[ERROR] Input not found: {input_file_path}", flush=True)
         raise SystemExit(1)

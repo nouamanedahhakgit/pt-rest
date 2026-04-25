@@ -26,7 +26,7 @@ auth = HTTPBasicAuth(WP_USER, WP_APP_PASSWORD)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-EXCEL_PATH = os.path.join(_REPO_ROOT, "ALL", "A1-Pinterest_01-out", "images.xlsx")
+EXCEL_PATH = a1_config.all_output_join("images.xlsx")
 df = pd.read_excel(EXCEL_PATH)
 
 # --- Ensure required columns exist ---

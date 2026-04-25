@@ -121,8 +121,8 @@ PINTEREST_BOARDS = list(
 )
 
 # ==== المسارات (مطابقة للكود 1 فقط) ====
-INPUT_FILE = os.path.join(_REPO_ROOT, "ALL", "A1-Pinterest_01-out", "images.xlsx")
-OUTPUT_DIRECTORY = os.path.join(_REPO_ROOT, "ALL", "A1-Pinterest_01-out")
+INPUT_FILE = a1_config.all_output_join("images.xlsx")
+OUTPUT_DIRECTORY = a1_config.all_output_dir()
 OUTPUT_FILE = 'Pin_01.xlsx'
 
 

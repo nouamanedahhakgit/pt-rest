@@ -273,7 +273,7 @@ def add_json_recipe_inplace(recipes_file_path: str, overwrite_existing: bool = F
     print(f"[INFO] Rows: {len(df)}")
 
 def _recipes_workbook_default() -> str:
-    return os.path.join(_REPO_ROOT, "ALL", "A1-Pinterest_01-out", "Recipes.xlsx")
+    return a1_config.all_output_join("Recipes.xlsx")
 
 
 def _ensure_recipes_workbook() -> str:
@@ -285,13 +285,13 @@ def _ensure_recipes_workbook() -> str:
     if os.path.isfile(path):
         return path
 
-    start1 = os.path.join(_REPO_ROOT, "STARTS", "START1.xlsx")
+    start1 = a1_config.resolve_start_titles_excel()
     if not os.path.isfile(start1):
         print(
             f"[ERROR] Missing both:\n"
             f"  {path}\n"
             f"  and input:\n  {start1}\n"
-            "  Add STARTS/START1.xlsx (with a Title column) or run A.1-START.py to create Recipes.xlsx.",
+            "  Add titles under STARTS/ (e.g. START1.xlsx or {site_id}.xlsx) or run A.1-START.py.",
             flush=True,
         )
         sys.exit(1)

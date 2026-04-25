@@ -6,6 +6,11 @@ from PIL import Image, ImageDraw, ImageFont
 import random
 import sys
 
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+import a1_config  # noqa: E402
+
 def wrap_text_by_width(draw, text, font, max_width):
     words = text.split()
     lines = []
@@ -118,7 +123,7 @@ def create_image(template_path, url_img1, url_img2, title_text,
 # MAIN
 if __name__ == "__main__":
     templates_dir = "templates"
-    output_dir = "../ALL/A1-Pinterest_01-out/output_images"
+    output_dir = a1_config.all_output_join("output_images")
     os.makedirs(output_dir, exist_ok=True)
 
     template_config = {
@@ -150,8 +155,8 @@ if __name__ == "__main__":
 
     line_spacing = 17
     jpeg_quality = 70
-    excel_file = "../ALL/A1-Pinterest_01-out/images.xlsx"
-    output_excel_file = "../ALL/A1-Pinterest_01-out/images.xlsx"
+    excel_file = a1_config.all_output_join("images.xlsx")
+    output_excel_file = a1_config.all_output_join("images.xlsx")
 
     try:
         df = pd.read_excel(excel_file)
