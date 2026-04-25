@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Projects — config/sites.json</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+  <style>
+    body { background-color: #f8f9fd; }
+    .materio-sidebar { width: 250px; min-height: 100vh; background: #fff; border-right: 1px solid #eceef1; position: fixed; left: 0; top: 0; padding: 20px; }
+    .materio-sidebar .sidebar-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 1rem; display: flex; align-items: center; }
+    .materio-sidebar ul { list-style: none; padding: 0; }
+    .materio-sidebar ul li { margin: 10px 0; }
+    .materio-sidebar ul li a { text-decoration: none; color: #626262; font-weight: 500; display: block; padding: 8px 10px; border-radius: 6px; }
+    .materio-sidebar ul li a:hover, .materio-sidebar ul li a.active { background: #7367F0; color: #fff; }
+    .navbar-materio { margin-left: 270px; background: #fff; border-bottom: 1px solid #eceef1; height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; position: fixed; width: calc(100% - 270px); top: 0; z-index: 1000; }
+    .materio-content { margin-left: 270px; padding: 20px; margin-top: 80px; max-width: 1200px; }
+    .site-card h3 { font-size: 1rem; }
+    .json-area { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="materio-sidebar">
+    <div class="sidebar-title">
+      <i class="bx bx-grid-alt"></i>
+      <span>AUTOMATION</span>
+    </div>
+    <ul>
+      <li><a href="/"><i class="bx bx-home-alt"></i> Dashboard</a></li>
+      <li><a href="/manage_sites" class="active"><i class="bx bx-list-ul"></i> Projects (sites)</a></li>
+      <li><a href="/manage_images"><i class="bx bx-image"></i> Manage Images</a></li>
+      <li><a href="/manage_articles"><i class="bx bx-file"></i> Manage Articles</a></li>
+    </ul>
+  </div>
+
+  <div class="navbar-materio">
+    <h5 class="m-0">Projects — <code>config/sites.json</code></h5>
+  </div>
+
+  <div class="materio-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for cat, msg in messages %}
+          <div class="alert alert-{{ 'danger' if cat == 'error' else 'success' }} alert-dismissible fade show" role="alert">
+            {{ msg }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <p class="text-muted">Add a row per WordPress / output folder. This file drives dashboard log cards and <code>PINTEREST_SITE_ID</code>. Optional API keys and JSON overrides are merged the same as when you edit the file by hand. Leave secret fields empty to keep the value already in the file.</p>
+
+    <form method="post" action="/manage_sites" class="mb-3">
+      <input type="hidden" name="action" value="add" />
+      <button type="submit" class="btn btn-success"><i class="bx bx-plus"></i> Add new project (row)</button>
+    </form>
+
+    <form method="post" id="sitesForm" action="/manage_sites">
+      <input type="hidden" name="action" value="save" />
+      <div class="card mb-3">
+        <div class="card-header"><strong>Global</strong></div>
+        <div class="card-body">
+          <label class="form-label">Pipeline code folder (contains <code>A.1-START.py</code>)</label>
+          <input type="text" class="form-control" name="pipeline_code_folder" value="{{ data.pipeline_code_folder }}" required />
+        </div>
+      </div>
+
+      <input type="hidden" name="site_count" value="{{ site_count }}" />
+
+      {% for site in sites_view %}
+      {% set i = loop.index0 %}
+      <div class="card mb-3 site-card">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <h3 class="mb-0">Project: <code>{{ site.get('id', '') }}</code> — {{ site.get('display_name', '') }}</h3>
+          <button type="button" class="btn btn-sm btn-outline-danger" onclick="if(confirm('Delete this project from config/sites.json?')) document.getElementById('delete-form-{{ i }}').submit();">Delete</button>
+        </div>
+        <div class="card-body">
+          <h6 class="text-secondary">Core</h6>
+          <div class="row g-2 mb-2">
+            <div class="col-md-3"><label class="form-label">id *</label><input class="form-control" name="site_{{ i }}_id" value="{{ site.get('id', '') }}" required /></div>
+            <div class="col-md-3"><label class="form-label">display_name *</label><input class="form-control" name="site_{{ i }}_display_name" value="{{ site.get('display_name', '') }}" required /></div>
+            <div class="col-md-3"><label class="form-label">out_dir *</label><input class="form-control" name="site_{{ i }}_out_dir" value="{{ site.get('out_dir', '') }}" required /></div>
+            <div class="col-md-3"><label class="form-label">start_file</label><input class="form-control" name="site_{{ i }}_start_file" value="{{ site.get('start_file', '') }}" placeholder="e.g. START1.xlsx" /></div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-3"><label class="form-label">log_id</label><input class="form-control" name="site_{{ i }}_log_id" value="{{ site.get('log_id', '') }}" placeholder="optional DOM id" /></div>
+            <div class="col-md-3"><label class="form-label">prompts_dir</label><input class="form-control" name="site_{{ i }}_prompts_dir" value="{{ site.get('prompts_dir', '') }}" placeholder="optional subdir under site_prompts" /></div>
+          </div>
+
+          <h6 class="text-secondary">WordPress</h6>
+          <div class="row g-2 mb-3">
+            <div class="col-12 col-md-6"><label class="form-label">wordpress_url</label><input class="form-control" name="site_{{ i }}_wordpress_url" value="{{ site.get('wordpress_url', '') }}" /></div>
+            <div class="col-md-3"><label class="form-label">wordpress_user</label><input class="form-control" name="site_{{ i }}_wordpress_user" value="{{ site.get('wordpress_user', '') }}" /></div>
+            <div class="col-md-3"><label class="form-label">wordpress_app_password</label><input class="form-control" type="password" name="site_{{ i }}_wordpress_app_password" value="" placeholder="blank = keep current" autocomplete="off" /><span class="small text-muted">Set new app password in WordPress, then type it here.</span></div>
+          </div>
+
+          <h6 class="text-secondary">API keys (optional; empty = keep existing in file for secrets)</h6>
+          <div class="row g-2 mb-2">
+            <div class="col-md-4"><label class="form-label">openai_api_key</label><input class="form-control" name="site_{{ i }}_openai_api_key" value="{{ site.get('openai_api_key', '') }}" placeholder="blank = keep" autocomplete="off" /></div>
+            <div class="col-md-4"><label class="form-label">openai_model</label><input class="form-control" name="site_{{ i }}_openai_model" value="{{ site.get('openai_model', '') }}" /></div>
+            <div class="col-md-4"><label class="form-label">useapi_token</label><input class="form-control" name="site_{{ i }}_useapi_token" value="{{ site.get('useapi_token', '') }}" placeholder="blank = keep" autocomplete="off" /></div>
+            <div class="col-md-4"><label class="form-label">useapi_midjourney_channel</label><input class="form-control" name="site_{{ i }}_useapi_midjourney_channel" value="{{ site.get('useapi_midjourney_channel', '') }}" placeholder="blank = keep" /></div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-4"><label class="form-label">r2_account_id</label><input class="form-control" name="site_{{ i }}_r2_account_id" value="{{ site.get('r2_account_id', '') }}" placeholder="blank = keep" /></div>
+            <div class="col-md-4"><label class="form-label">r2_access_key_id</label><input class="form-control" name="site_{{ i }}_r2_access_key_id" value="{{ site.get('r2_access_key_id', '') }}" placeholder="blank = keep" /></div>
+            <div class="col-md-4"><label class="form-label">r2_secret_access_key</label><input class="form-control" name="site_{{ i }}_r2_secret_access_key" value="{{ site.get('r2_secret_access_key', '') }}" placeholder="blank = keep" /></div>
+            <div class="col-md-4"><label class="form-label">r2_bucket</label><input class="form-control" name="site_{{ i }}_r2_bucket" value="{{ site.get('r2_bucket', '') }}" placeholder="blank = keep" /></div>
+            <div class="col-md-8"><label class="form-label">r2_public_base_url</label><input class="form-control" name="site_{{ i }}_r2_public_base_url" value="{{ site.get('r2_public_base_url', '') }}" placeholder="blank = keep" /></div>
+          </div>
+
+          <h6 class="text-secondary">Config flags</h6>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="site_{{ i }}_no_shared_settings" value="1" id="nss{{ i }}" {% if site.get('no_shared_settings') %}checked{% endif %} />
+            <label class="form-check-label" for="nss{{ i }}">no_shared_settings (skip repo <code>shared_settings.json</code>)</label>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="site_{{ i }}_no_shared_prompts" value="1" id="nsp{{ i }}" {% if site.get('no_shared_prompts') %}checked{% endif %} />
+            <label class="form-check-label" for="nsp{{ i }}">no_shared_prompts (skip repo <code>config/prompts</code>)</label>
+          </div>
+
+          <h6 class="text-secondary">Advanced JSON (per-site <code>settings</code> / <code>prompts</code>)</h6>
+          <p class="small text-muted">Leave empty to keep what is in the file now. To clear, put <code>{}</code> and save.</p>
+          <div class="mb-2">
+            <label class="form-label">settings JSON</label>
+            <textarea class="form-control json-area" rows="6" name="site_{{ i }}_settings_json">{{ site.get('_settings_json', '') }}</textarea>
+          </div>
+          <div class="mb-0">
+            <label class="form-label">prompts JSON (inline overrides by prompt name)</label>
+            <textarea class="form-control json-area" rows="8" name="site_{{ i }}_prompts_json">{{ site.get('_prompts_json', '') }}</textarea>
+          </div>
+        </div>
+      </div>
+      {% else %}
+        <p class="text-muted">No projects yet. Use <strong>Add new project</strong> above.</p>
+      {% endfor %}
+
+      <div class="d-flex gap-2 mb-4">
+        <button type="submit" class="btn btn-primary btn-lg" {% if site_count == 0 %}disabled{% endif %}>Save all to <code>config/sites.json</code></button>
+        <a href="/" class="btn btn-outline-secondary">Back to dashboard</a>
+      </div>
+    </form>
+
+    {% for site in sites_view %}
+    {% set i = loop.index0 %}
+    <form id="delete-form-{{ i }}" method="post" action="/manage_sites" class="d-none" aria-hidden="true">
+      <input type="hidden" name="action" value="delete" />
+      <input type="hidden" name="site_id" value="{{ site.get('id', '') }}" />
+    </form>
+    {% endfor %}
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

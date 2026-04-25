@@ -1,0 +1,107 @@
+{
+  "pipeline_code_folder": "A1-Pinterest_01",
+  "sites": [
+    {
+      "id": "p01",
+      "display_name": "Site A (minimal — WordPress and paths only)",
+      "out_dir": "A1-Pinterest_01-out",
+      "wordpress_url": "https://your-site-1.example",
+      "wordpress_user": "wp-user-1",
+      "wordpress_app_password": "xxxx xxxx xxxx xxxx xxxx xxxx"
+    },
+    {
+      "id": "p02",
+      "display_name": "Site B (per-site API keys, settings, and inline prompts)",
+      "out_dir": "A2-Pinterest_02-out",
+      "start_file": "START1.xlsx",
+      "openai_api_key": "",
+      "openai_model": "gpt-4o-mini",
+      "useapi_token": "",
+      "useapi_midjourney_channel": "",
+      "r2_account_id": "",
+      "r2_access_key_id": "",
+      "r2_secret_access_key": "",
+      "r2_bucket": "",
+      "r2_public_base_url": "",
+      "wordpress_url": "https://your-site-2.example",
+      "wordpress_user": "wp-user-2",
+      "wordpress_app_password": "yyyy yyyy yyyy yyyy yyyy yyyy",
+      "no_shared_settings": false,
+      "no_shared_prompts": false,
+      "settings": {
+        "article_language": "Spanish",
+        "a4_total_words": 2800,
+        "a4_recipe_excel": "ALL/A2-Pinterest_02-out/images.xlsx",
+        "category_id_mapping": {
+          "drinks": 10,
+          "dessert": 20,
+          "appetizers": 5,
+          "dinner": 4
+        }
+      },
+      "prompts": {
+        "a1_start": {
+          "generate_from_title": {
+            "temperature": 0.55
+          }
+        },
+        "a2_json": {
+          "preamble": "Recipe title: "
+        },
+        "a2_prompt": {
+          "chat_max_tokens_default": 650
+        },
+        "a4_articles": {
+          "outline": {
+            "max_tokens": 1000
+          }
+        },
+        "a5_pin_data": {
+          "categorize": {
+            "max_tokens": 5
+          }
+        },
+        "a8_pin_bulk": {
+          "categorize_boards": {
+            "max_tokens": 60
+          }
+        }
+      }
+    },
+    {
+      "id": "p03",
+      "display_name": "Site C (no_shared_*: skips repo shared_settings + config/prompts; set full settings in this row and optional A1-.../config files)",
+      "out_dir": "A3-example-out",
+      "no_shared_settings": true,
+      "no_shared_prompts": true,
+      "openai_model": "gpt-4o-mini",
+      "wordpress_url": "https://your-site-3.example",
+      "wordpress_user": "wp-user-3",
+      "wordpress_app_password": "zzzz zzzz zzzz zzzz zzzz zzzz",
+      "settings": {
+        "openai_model": "gpt-4o-mini",
+        "article_language": "French",
+        "a4_total_words": 3000,
+        "a4_max_tokens_per_part": 3000,
+        "a4_ingredients_label": "Ingredients",
+        "a4_recipe_excel": "ALL/A3-example-out/images.xlsx",
+        "a4_recipe_sheet": "Sheet1",
+        "a4_recipe_column": "Recipe",
+        "a2_prompt_model": "gpt-4o-mini",
+        "category_id_mapping": {
+          "drinks": 1,
+          "dessert": 2,
+          "appetizers": 3,
+          "dinner": 4
+        },
+        "pinterest_boards": [
+          "Board A",
+          "Board B"
+        ],
+        "a3_submit_spacing_seconds": 2.5,
+        "a2_json_max_tokens": 1200,
+        "a2_json_temperature": 0.2
+      }
+    }
+  ]
+}

@@ -1,8 +1,28 @@
 """
-Load secrets: repo config/shared_keys.json merged with <project>/config/keys.json,
-non-secret settings (config/settings.json), and optional prompt JSON under config/prompts/.
+Load secrets, settings, and prompts with repo-wide + per-pipeline + per-site layers:
 
-Precedence: environment variables override merged keys. Project keys override shared.
+- Keys:  config/shared_keys.json → (optional) <project>/config/keys.json → (optional) same keys on
+  the active site row in config/sites.json → environment variables
+- Settings:  config/shared_settings.json → (optional) <project>/config/settings.json →
+  (optional) site["settings"] in config/sites.json
+- Prompts:  config/prompts/{name}.json → (optional) <project>/config/prompts/{name}.json →
+  (optional) config/site_prompts/{site["prompts_dir"]}/{name}.json →
+  (optional) site["prompts"][name] in config/sites.json
+
+On the active site row, set "no_shared_settings": true to skip config/shared_settings.json, or
+"no_shared_prompts": true to skip config/prompts/ (shared repo files only; project A1/.../config/prompts
+still load).
+
+Templates: copy config/shared_keys.example.json -> shared_keys.json, shared_settings.example.json ->
+shared_settings.json; see config/sites.example.json. Optional: A1-Pinterest_01/config/keys.json or
+settings.json; per-site file prompts: prompts_dir + config/site_prompts/{id}/*.json.
+
+If set, environment variables override JSON for the same setting (e.g. OPENAI_API_KEY, OPENAI_MODEL,
+USEAPI_NET_API_TOKEN or USEAPI_TOKEN, USEAPI_MJ_CHANNEL or USEAPI_MIDJOURNEY_CHANNEL, CLOUDFLARE_ACCOUNT_ID,
+R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_BASE_URL, WP_URL, WP_USER, WP_APP_PASSWORD;
+also PINTEREST_SITE_ID, PINTEREST_OUT_DIR, OPENAI_REQUEST_TIMEOUT, OPENAI_RETRY_MAX_TRIES in child scripts).
+
+All merges are deep (nested dicts combine). The active site is selected by PINTEREST_SITE_ID.
 """
 from __future__ import annotations
 
@@ -15,10 +35,25 @@ A1_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = A1_DIR / "config"
 PROMPTS_DIR = CONFIG_DIR / "prompts"
 REPO_ROOT = A1_DIR.parent
-# One file for the whole repo: OpenAI, UseAPI, R2. Per-project config/keys.json merges on top (WordPress, overrides).
+# Repo config: OpenAI, UseAPI, R2. Optional <project>/config/keys.json merges on top; missing files = skip layer.
 REPO_CONFIG_DIR = REPO_ROOT / "config"
 SHARED_KEYS_PATH = REPO_CONFIG_DIR / "shared_keys.json"
+SHARED_SETTINGS_PATH = REPO_CONFIG_DIR / "shared_settings.json"
+SHARED_PROMPTS_DIR = REPO_CONFIG_DIR / "prompts"
+SITE_PROMPTS_DIR = REPO_CONFIG_DIR / "site_prompts"
 SITES_PATH = REPO_CONFIG_DIR / "sites.json"
+
+
+def _deep_merge(base: Dict[str, Any], extra: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not extra:
+        return dict(base) if base else {}
+    out: Dict[str, Any] = dict(base) if base else {}
+    for k, v in extra.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
@@ -30,23 +65,35 @@ def _read_json(path: Path) -> Dict[str, Any]:
 
 
 def load_settings() -> Dict[str, Any]:
-    """Non-secret defaults (language, word counts, paths relative names, etc.)."""
-    return _read_json(CONFIG_DIR / "settings.json")
+    """
+    Merges config/shared_settings.json, project config/settings.json, then
+    the active site row's "settings" object in config/sites.json (if present).
+    If the site has no_shared_settings: true, the shared file is not used (start from project local).
+    """
+    site = get_active_site()
+    use_shared = not (
+        isinstance(site, dict) and (site.get("no_shared_settings") is True)
+    )
+    shared = _read_json(SHARED_SETTINGS_PATH) if use_shared else {}
+    local = _read_json(CONFIG_DIR / "settings.json")
+    data = _deep_merge(shared, local)
+    st = (site or {}).get("settings") if isinstance(site, dict) else None
+    if isinstance(st, dict) and st:
+        data = _deep_merge(data, st)
+    return data
 
 
 def load_keys() -> Dict[str, Any]:
     """
-    Merges repo-wide shared keys (config/shared_keys.json) with this project's config/keys.json.
-    Project values override shared (e.g. put only WordPress in the project file; openai/r2 in shared).
-    Tries project keys.json, then keys.example.json if missing.
+    Merges config/shared_keys.json with (optional) A1-Pinterest_01/config/keys.json if that file exists.
+    Project values override shared. Start from config/shared_keys.example.json -> copy to shared_keys.json.
+
+    For a run with PINTEREST_SITE_ID set, any non-empty OpenAI / UseAPI / R2 / WordPress fields on that
+    row in config/sites.json override shared and project keys for that site only.
     """
     shared = _read_json(SHARED_KEYS_PATH)
     keys_path = CONFIG_DIR / "keys.json"
-    ex_path = CONFIG_DIR / "keys.example.json"
-    if keys_path.is_file():
-        local = _read_json(keys_path)
-    else:
-        local = _read_json(ex_path)
+    local = _read_json(keys_path) if keys_path.is_file() else {}
     data: Dict[str, Any] = {**shared, **local}
 
     # Blanks in project keys.json must not erase shared_keys.json (only non-empty local overrides)
@@ -65,12 +112,26 @@ def load_keys() -> Dict[str, Any]:
         if isinstance(v, str) and not v.strip() and shared.get(k) and str(shared.get(k, "")).strip():
             data[k] = shared[k]
 
-    # WordPress (and any site fields) from config/sites.json for PINTEREST_SITE_ID
+    # Per-site row in config/sites.json overrides shared + project (when PINTEREST_SITE_ID is set)
     site = get_active_site()
-    for k in ("wordpress_url", "wordpress_user", "wordpress_app_password"):
-        v = site.get(k) if isinstance(site, dict) else None
-        if v is not None and str(v).strip() != "":
-            data[k] = v
+    if isinstance(site, dict):
+        for k in (
+            "openai_api_key",
+            "openai_model",
+            "useapi_token",
+            "useapi_midjourney_channel",
+            "r2_account_id",
+            "r2_access_key_id",
+            "r2_secret_access_key",
+            "r2_bucket",
+            "r2_public_base_url",
+            "wordpress_url",
+            "wordpress_user",
+            "wordpress_app_password",
+        ):
+            v = site.get(k)
+            if v is not None and str(v).strip() != "":
+                data[k] = v
 
     # --- env overrides (standard names) ---
     if os.environ.get("OPENAI_API_KEY"):
@@ -106,8 +167,50 @@ def load_keys() -> Dict[str, Any]:
 
 
 def load_prompts(name: str) -> Dict[str, Any]:
-    """Load config/prompts/{name}.json (no extension in name)."""
-    return _read_json(PROMPTS_DIR / f"{name}.json")
+    """
+    Merges (deep): repo config/prompts/{name}.json, project config/prompts/{name}.json,
+    then optional file config/site_prompts/{site.prompts_dir}/{name}.json,
+    then optional site['prompts'][name] in config/sites.json.
+    `name` is the filename without .json, e.g. a1_start, a2_json, a4_articles.
+    """
+    site = get_active_site()
+    use_shared = not (
+        isinstance(site, dict) and (site.get("no_shared_prompts") is True)
+    )
+    sh = _read_json(SHARED_PROMPTS_DIR / f"{name}.json") if use_shared else {}
+    loc = _read_json(PROMPTS_DIR / f"{name}.json")
+    data = _deep_merge(sh, loc)
+    if not isinstance(site, dict):
+        return data
+    sub = site.get("prompts_dir")
+    if isinstance(sub, str) and sub.strip():
+        p = SITE_PROMPTS_DIR / sub.strip() / f"{name}.json"
+        data = _deep_merge(data, _read_json(p))
+    pm = site.get("prompts")
+    if isinstance(pm, dict) and name in pm and isinstance(pm[name], dict):
+        data = _deep_merge(data, pm[name])
+    return data
+
+
+def load_prompts_excluding_row_inline(name: str) -> Dict[str, Any]:
+    """
+    Same file layers as load_prompts (shared, project, site prompts_dir files) but does not
+    apply site['prompts'][name] from the sites.json row — for comparing “baseline” vs inline row.
+    """
+    site = get_active_site()
+    use_shared = not (
+        isinstance(site, dict) and (site.get("no_shared_prompts") is True)
+    )
+    sh = _read_json(SHARED_PROMPTS_DIR / f"{name}.json") if use_shared else {}
+    loc = _read_json(PROMPTS_DIR / f"{name}.json")
+    data = _deep_merge(sh, loc)
+    if not isinstance(site, dict):
+        return data
+    sub = site.get("prompts_dir")
+    if isinstance(sub, str) and sub.strip():
+        p = SITE_PROMPTS_DIR / sub.strip() / f"{name}.json"
+        data = _deep_merge(data, _read_json(p))
+    return data
 
 
 def read_excel_with_retry(
@@ -160,7 +263,10 @@ def set_openai_key_from_keys(keys: Optional[Dict[str, Any]] = None) -> str:
     k = keys if keys is not None else load_keys()
     key = (k.get("openai_api_key") or os.environ.get("OPENAI_API_KEY") or "").strip()
     if not key:
-        raise RuntimeError("Missing openai_api_key: set in config/keys.json or environment OPENAI_API_KEY.")
+        raise RuntimeError(
+            "Missing openai_api_key: set in config/shared_keys.json, this project's config/keys.json, "
+            "a site field in config/sites.json, or environment OPENAI_API_KEY."
+        )
     openai.api_key = key
     return key
 
@@ -230,3 +336,400 @@ def resolve_start_titles_excel() -> str:
         if c.is_file():
             return str(c)
     return str(d / f"{sid}.xlsx")
+
+
+def _mask_secret(value: str, *, head: int = 4, tail: int = 4) -> str:
+    s = (value or "").strip()
+    if not s:
+        return ""
+    if len(s) <= head + tail + 1:
+        return "(set)"
+    return s[:head] + "…" + s[-tail:]
+
+
+def _redact_keys_for_view(d: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(d)
+    sens = (
+        "openai_api_key",
+        "useapi_token",
+        "r2_secret_access_key",
+        "r2_access_key_id",
+        "wordpress_app_password",
+    )
+    for k in sens:
+        v = out.get(k)
+        if v is not None and str(v).strip():
+            out[k] = _mask_secret(str(v))
+        elif v is not None and not str(v).strip():
+            out[k] = ""
+    return out
+
+
+def _value_outline_for_view(
+    val: Any,
+    *,
+    max_str: int = 120,
+    _depth: int = 0,
+    _max_depth: int = 10,
+) -> Any:
+    """
+    Recursively show dict/list/string values in a size-bounded, dashboard-safe way
+    (strings truncated; no more '<dict, N chars>' placeholders).
+    """
+    if _depth >= _max_depth:
+        return "…"
+    if val is None or isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val
+    if isinstance(val, str):
+        s = val
+        if len(s) > max_str:
+            return s[: max_str - 1] + "…"
+        return s
+    if isinstance(val, list):
+        if not val:
+            return []
+        return [
+            _value_outline_for_view(x, max_str=max_str, _depth=_depth + 1, _max_depth=_max_depth)
+            for x in val[:5]
+        ] + (["…"] if len(val) > 5 else [])
+    if isinstance(val, dict):
+        return {
+            k: _value_outline_for_view(v, max_str=max_str, _depth=_depth + 1, _max_depth=_max_depth)
+            for k, v in val.items()
+        }
+    return str(val)
+
+
+def _active_site_dict_for_view(site: Dict[str, Any]) -> Dict[str, Any]:
+    """Site row for Info tab: inline prompts are outlined (readable), not collapsed to a char count."""
+    out = dict(site)
+    pm = out.get("prompts")
+    if isinstance(pm, dict):
+        out["prompts"] = {
+            str(name): _value_outline_for_view(val)
+            for name, val in pm.items()
+        }
+    return out
+
+
+# Secrets that may appear on the site row in sites.json; mask like merged keys
+_ACTIVE_SITE_REDACT_KEYS = (
+    "wordpress_app_password",
+    "openai_api_key",
+    "useapi_token",
+    "r2_secret_access_key",
+    "r2_access_key_id",
+)
+
+
+def keys_provenance() -> Dict[str, str]:
+    """
+    Human-readable **where the merged value comes from** for each key in load_keys().
+
+    Precedence matches load_keys: environment → this site row in sites.json →
+    A1-.../config/keys.json → config/shared_keys.json. WordPress fields are not in
+    shared_keys; they come from the site row or WP_* env only.
+    """
+    site = get_active_site() if isinstance(get_active_site(), dict) else {}
+    m = load_keys()
+    out: Dict[str, str] = {}
+    if not m:
+        return out
+
+    def _nz(d: object, k: str) -> bool:
+        if not isinstance(d, dict) or k not in d:
+            return False
+        return str(d.get(k) or "").strip() != ""
+
+    def _v_eq(a: object, b: object) -> bool:
+        return str(a or "") == str(b or "")
+
+    API_KEYS = (
+        "openai_api_key",
+        "openai_model",
+        "useapi_token",
+        "useapi_midjourney_channel",
+        "r2_account_id",
+        "r2_access_key_id",
+        "r2_secret_access_key",
+        "r2_bucket",
+        "r2_public_base_url",
+    )
+    local_path = CONFIG_DIR / "keys.json"
+    local = _read_json(local_path) if local_path.is_file() else {}
+    shared = _read_json(SHARED_KEYS_PATH)
+
+    for k in m.keys():
+        if k == "openai_api_key" and os.environ.get("OPENAI_API_KEY"):
+            out[k] = "Environment: OPENAI_API_KEY (highest priority)"
+        elif k == "openai_model" and os.environ.get("OPENAI_MODEL"):
+            out[k] = "Environment: OPENAI_MODEL"
+        elif k == "useapi_token" and (
+            os.environ.get("USEAPI_TOKEN") or os.environ.get("USEAPI_NET_API_TOKEN")
+        ):
+            out[k] = "Environment: USEAPI_TOKEN or USEAPI_NET_API_TOKEN"
+        elif k == "useapi_midjourney_channel" and (
+            os.environ.get("USEAPI_MJ_CHANNEL")
+            or os.environ.get("USEAPI_MIDJOURNEY_CHANNEL")
+        ):
+            out[k] = "Environment: USEAPI_MJ_CHANNEL / USEAPI_MIDJOURNEY_CHANNEL"
+        elif k == "r2_account_id" and os.environ.get("CLOUDFLARE_ACCOUNT_ID"):
+            out[k] = "Environment: CLOUDFLARE_ACCOUNT_ID"
+        elif k == "r2_access_key_id" and os.environ.get("R2_ACCESS_KEY_ID"):
+            out[k] = "Environment: R2_ACCESS_KEY_ID"
+        elif k == "r2_secret_access_key" and os.environ.get("R2_SECRET_ACCESS_KEY"):
+            out[k] = "Environment: R2_SECRET_ACCESS_KEY"
+        elif k == "r2_bucket" and os.environ.get("R2_BUCKET"):
+            out[k] = "Environment: R2_BUCKET"
+        elif k == "r2_public_base_url" and os.environ.get("R2_PUBLIC_BASE_URL"):
+            out[k] = "Environment: R2_PUBLIC_BASE_URL"
+        elif k == "wordpress_url" and os.environ.get("WP_URL"):
+            out[k] = "Environment: WP_URL"
+        elif k == "wordpress_user" and os.environ.get("WP_USER"):
+            out[k] = "Environment: WP_USER"
+        elif k == "wordpress_app_password" and os.environ.get("WP_APP_PASSWORD"):
+            out[k] = "Environment: WP_APP_PASSWORD"
+    for k in m.keys():
+        if k in out:
+            continue
+        if _nz(site, k):
+            out[k] = (
+                f'Overridden: this project row in config/sites.json (field "{k}")  '
+                "wins over shared_keys.json and A1-…/config/keys.json"
+            )
+            continue
+        if k in API_KEYS:
+            if _nz(local, k) and _v_eq(m.get(k), local.get(k)):
+                out[k] = (
+                    f'From A1-Pinterest_01/config/keys.json (field "{k}")  '
+                    "project override of shared_keys"
+                )
+            elif _nz(shared, k) and _v_eq(m.get(k), shared.get(k)):
+                out[k] = (
+                    f'From config/shared_keys.json (field "{k}")  '
+                    "not set on this site row; value is the repo default for this key"
+                )
+            elif _nz(local, k):
+                out[k] = f'From A1-Pinterest_01/config/keys.json (field "{k}")'
+            elif _nz(shared, k):
+                out[k] = f'From config/shared_keys.json (field "{k}")'
+            else:
+                out[k] = "merged (no JSON source found for this key)"
+        elif k in ("wordpress_url", "wordpress_user", "wordpress_app_password"):
+            out[k] = "Not in shared_keys. Add in sites.json or use WP_URL / WP_USER / WP_APP_PASSWORD"
+        else:
+            out[k] = "other"
+    return out
+
+
+_INLINE_PROMPT_NAMES = (
+    "a1_start",
+    "a2_json",
+    "a2_prompt",
+    "a4_articles",
+    "a5_pin_data",
+    "a8_pin_bulk",
+)
+
+
+def _prompt_leaf_field_kind(key: str, val: Any) -> str:
+    """
+    How to edit one leaf in the site-editor form, inferred from the repo prompt JSON value.
+    """
+    if isinstance(val, bool):
+        return "bool"
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return "number"
+    if isinstance(val, str):
+        lk = (key or "").lower()
+        if len(val) > 200 or any(
+            x in lk
+            for x in (
+                "system",
+                "user_template",
+                "json_schema",
+                "user",
+                "template",
+                "schema",
+                "prefix",
+                "suffix",
+                "intro",
+                "mid",
+            )
+        ):
+            return "textarea"
+        if len(val) > 80:
+            return "textarea"
+        return "text"
+    if isinstance(val, list):
+        if not val:
+            return "json"
+        if all(isinstance(x, str) for x in val):
+            return "lines"
+        return "json"
+    return "json"
+
+
+def _flatten_repo_prompt_to_fields(d: Any, prefix: str, out: list) -> None:
+    if isinstance(d, dict):
+        for k, v in d.items():
+            sub = f"{prefix}.{k}" if prefix else str(k)
+            if isinstance(v, dict):
+                if v:
+                    _flatten_repo_prompt_to_fields(v, sub, out)
+            else:
+                out.append(
+                    {
+                        "path": sub,
+                        "kind": _prompt_leaf_field_kind(k, v),
+                        "label": sub,
+                    }
+                )
+
+
+def prompts_inline_field_schema() -> Dict[str, Any]:
+    """
+    For each config/prompts/{name}.json, list of {path, kind, label} for the dashboard
+    to render one input per field (builds the same JSON shape on save).
+    """
+    result: Dict[str, Any] = {}
+    for n in _INLINE_PROMPT_NAMES:
+        raw = _read_json(SHARED_PROMPTS_DIR / f"{n}.json")
+        if not raw:
+            result[n] = []
+            continue
+        rows: list = []
+        _flatten_repo_prompt_to_fields(raw, "", rows)
+        rows.sort(key=lambda r: (r.get("path") or ""))
+        result[n] = rows
+    return result
+
+
+def _flatten_merged_prompt_to_map(d: Any, prefix: str, out: Dict[str, Any]) -> None:
+    """Same leaves as the form schema, but store merged values (from load_prompts)."""
+    if isinstance(d, dict):
+        for k, v in d.items():
+            sub = f"{prefix}.{k}" if prefix else str(k)
+            if isinstance(v, dict):
+                if v:
+                    _flatten_merged_prompt_to_map(v, sub, out)
+            else:
+                out[sub] = v
+
+
+def prompts_effective_by_path() -> Dict[str, Dict[str, Any]]:
+    """
+    For each inline prompt name, flat dot-path  merged value the pipeline would use
+    (shared + project + site files + this row) — for dashboard placeholders when
+    a field is not overridden on the site row.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    for n in _INLINE_PROMPT_NAMES:
+        p = load_prompts(n)
+        if not isinstance(p, dict) or not p:
+            result[n] = {}
+            continue
+        flat: Dict[str, Any] = {}
+        _flatten_merged_prompt_to_map(p, "", flat)
+        result[n] = flat
+    return result
+
+
+def prompts_excluding_row_inline_by_path() -> Dict[str, Dict[str, Any]]:
+    """
+    Same paths as prompts_effective_by_path but merged from files + prompts_dir only,
+    not sites.json row `prompts` — for tooltips when the row does override a field.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    for n in _INLINE_PROMPT_NAMES:
+        p = load_prompts_excluding_row_inline(n)
+        if not isinstance(p, dict) or not p:
+            result[n] = {}
+            continue
+        flat: Dict[str, Any] = {}
+        _flatten_merged_prompt_to_map(p, "", flat)
+        result[n] = flat
+    return result
+
+
+def _prompt_block_hint(name: str) -> str:
+    site = get_active_site() if isinstance(get_active_site(), dict) else {}
+    use_shared = not (isinstance(site, dict) and (site.get("no_shared_prompts") is True))
+    bits: list[str] = []
+    if use_shared and _read_json(SHARED_PROMPTS_DIR / f"{name}.json"):
+        bits.append("config/prompts/{}.json".format(name))
+    if _read_json(PROMPTS_DIR / f"{name}.json"):
+        bits.append("A1…/config/prompts/{}.json".format(name))
+    if isinstance(site, dict) and str(site.get("prompts_dir") or "").strip():
+        p = SITE_PROMPTS_DIR / str(site.get("prompts_dir")).strip() / f"{name}.json"
+        if p.is_file() and _read_json(p):
+            bits.append("config/site_prompts/…/{}.json".format(name))
+    pm = site.get("prompts") if isinstance(site, dict) else None
+    if (
+        isinstance(pm, dict)
+        and name in pm
+        and isinstance(pm.get(name), dict)
+        and pm.get(name)
+    ):
+        bits.append("this row → prompts → {}".format(name))
+    if not bits:
+        return "no files yet; add repo prompts or type inline below"
+    return " ← ".join(bits)
+
+
+def resolved_runtime_snapshot() -> Dict[str, Any]:
+    """
+    Merged settings/keys and active site (with secrets redacted) for the dashboard /api/site-config.
+    Depends on the current PINTEREST_SITE_ID and the rest of the environment, like worker subprocesses.
+    """
+    site = get_active_site()
+    site_view = _active_site_dict_for_view(site) if isinstance(site, dict) else site
+    if isinstance(site_view, dict):
+        for k in _ACTIVE_SITE_REDACT_KEYS:
+            if k in site_view and site_view.get(k) is not None and str(site_view.get(k) or "").strip():
+                site_view[k] = _mask_secret(str(site_view[k]))  # type: ignore[index]
+
+    st = load_settings()
+    k_all = load_keys()
+    k_view = _redact_keys_for_view(k_all)
+    pr_names = ("a1_start", "a2_json", "a2_prompt", "a4_articles", "a5_pin_data", "a8_pin_bulk")
+    prompts_summary: Dict[str, Any] = {}
+    for n in pr_names:
+        p = load_prompts(n)
+        if isinstance(p, dict):
+            prompts_summary[n] = {
+                "top_level_keys": list(p.keys()),
+                "merged_outline": _value_outline_for_view(p),
+            }
+        else:
+            prompts_summary[n] = {"top_level_keys": [], "merged_outline": {}}
+    use_shared_st = not (isinstance(site, dict) and (site.get("no_shared_settings") is True))
+    use_shared_pr = not (isinstance(site, dict) and (site.get("no_shared_prompts") is True))
+    return {
+        "pinterest_site_id": os.environ.get("PINTEREST_SITE_ID", ""),
+        "all_output_dir": all_output_dir(),
+        "resolve_start_titles_excel": resolve_start_titles_excel(),
+        "how_merge_works": {
+            "settings": "config/shared_settings.json, then A1-.../config/settings.json, then this site row settings (or skip shared if no_shared_settings).",
+            "keys": "config/shared_keys.json, then project keys.json, then non-empty fields on this site row, then env overrides.",
+            "wordpress": "URL / user / app password: only from this site row in sites.json and WP_URL / WP_USER / WP_APP_PASSWORD (not from shared_keys.json; that file is OpenAI / UseAPI / R2).",
+            "prompts_files": "config/prompts, project prompts, config/site_prompts/prompts_dir, then site row prompts[…] (or skip shared dir if no_shared_prompts).",
+            "uses_shared_settings_file": use_shared_st,
+            "uses_shared_prompts_dir": use_shared_pr,
+        },
+        "openai_model_effective": get_openai_model(),
+        "settings_top_level_keys": sorted(st.keys(), key=str),
+        "keys_merged_field_names": sorted([x for x in k_all.keys() if not str(x).startswith("_")], key=str),
+        "keys_provenance": keys_provenance(),
+        "prompts_form_hints": {n: _prompt_block_hint(n) for n in pr_names},
+        "prompts_inline_field_schema": prompts_inline_field_schema(),
+        "active_site": site_view,
+        "settings": st,
+        "keys": k_view,
+        "prompts_effective_merged": prompts_summary,
+        "prompts_summary": prompts_summary,
+        "prompts_effective_by_path": prompts_effective_by_path(),
+        "prompts_excluding_row_inline_by_path": prompts_excluding_row_inline_by_path(),
+    }

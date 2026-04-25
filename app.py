@@ -5,14 +5,26 @@ import threading
 import queue
 import json
 import re
-from flask import Flask, Response, request, jsonify, stream_with_context
+import copy
+import importlib.util
+from flask import (
+    Flask,
+    Response,
+    request,
+    jsonify,
+    stream_with_context,
+    render_template,
+    redirect,
+    url_for,
+    flash,
+)
 import openpyxl
 import openai
 import sys
 import time
 import random
 import logging
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Optional, Dict, List
 
 
 app = Flask(__name__)
@@ -374,6 +386,163 @@ def flat_ui_labels() -> list:
 
 def is_allowed_project_label(label: str) -> bool:
     return any(u["label"] == label or u.get("log_id") == label for u in flat_run_units())
+
+
+def _site_index_by_project_label(label: str) -> Optional[int]:
+    """Index into config/sites.json sites[] for this dashboard project label (or log_id)."""
+    d = _load_sites_file_app()
+    if not isinstance(d, dict):
+        return None
+    sites = d.get("sites")
+    if not isinstance(sites, list):
+        return None
+    u = _unit_by_label(label)
+    if not u:
+        return None
+    e = u.get("env") or {}
+    sid = str(e.get("PINTEREST_SITE_ID", "")).strip()
+    for i, s in enumerate(sites):
+        if not isinstance(s, dict):
+            continue
+        if sid and str(s.get("id", "")).strip() == sid:
+            return i
+        stitle = _site_row_public_title(s)
+        if stitle == label or str(s.get("id", "")).strip() == label or str(s.get("log_id", "")).strip() == label:
+            return i
+    return None
+
+
+SITES_FILE_PATH = os.path.join(_APP_CONFIG, "sites.json")
+
+# Keys saved as plain strings in the form (optional empty = drop or keep secret, see _site_from_form)
+_SITE_FORM_STRING_KEYS = (
+    "id",
+    "display_name",
+    "out_dir",
+    "start_file",
+    "log_id",
+    "prompts_dir",
+    "openai_api_key",
+    "openai_model",
+    "useapi_token",
+    "useapi_midjourney_channel",
+    "r2_account_id",
+    "r2_access_key_id",
+    "r2_secret_access_key",
+    "r2_bucket",
+    "r2_public_base_url",
+    "wordpress_url",
+    "wordpress_user",
+    "wordpress_app_password",
+)
+
+# If user leaves these blank in the form, keep previous file values (same as password UX)
+_SITE_SECRET_REUSE_KEYS = (
+    "openai_api_key",
+    "useapi_token",
+    "useapi_midjourney_channel",
+    "r2_access_key_id",
+    "r2_secret_access_key",
+    "r2_account_id",
+    "r2_bucket",
+    "r2_public_base_url",
+    "wordpress_app_password",
+)
+
+
+def _write_sites_doc(doc: dict) -> None:
+    os.makedirs(os.path.dirname(SITES_FILE_PATH) or ".", exist_ok=True)
+    txt = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    tmp = SITES_FILE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(txt)
+    os.replace(tmp, SITES_FILE_PATH)
+
+
+def _next_default_site_id(sites: list) -> str:
+    nmax = 0
+    for s in sites:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id", "")).strip()
+        m = re.match(r"^p?(\d+)$", sid, re.I)
+        if m:
+            nmax = max(nmax, int(m.group(1)))
+    for k in range(nmax + 1, 999):
+        candidate = f"p{k:02d}"
+        if not any(isinstance(s, dict) and str(s.get("id", "")).strip() == candidate for s in sites):
+            return candidate
+    return "p99"
+
+
+def _site_from_form(form, i: int, old: Optional[dict]) -> dict:
+    old = old or {}
+    p = f"site_{i}_"
+    s: dict = {}
+    for k in _SITE_FORM_STRING_KEYS:
+        v = (form.get(p + k) or "").strip()
+        if v:
+            s[k] = v
+    if form.get(p + "no_shared_settings") == "1":
+        s["no_shared_settings"] = True
+    if form.get(p + "no_shared_prompts") == "1":
+        s["no_shared_prompts"] = True
+    t = (form.get(p + "settings_json") or "").strip()
+    if t:
+        try:
+            s["settings"] = json.loads(t)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Site {i + 1} settings JSON: {e}") from e
+    else:
+        if "settings" in old:
+            s["settings"] = old["settings"]
+    t2 = (form.get(p + "prompts_json") or "").strip()
+    if t2:
+        try:
+            s["prompts"] = json.loads(t2)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Site {i + 1} prompts JSON: {e}") from e
+    else:
+        if "prompts" in old:
+            s["prompts"] = old["prompts"]
+    for k in _SITE_SECRET_REUSE_KEYS:
+        if s.get(k):
+            continue
+        if k in old and (old.get(k) is not None) and str(old.get(k) or "").strip() != "":
+            s[k] = old[k]
+    return s
+
+
+def _default_new_site(sites: list) -> dict:
+    sid = _next_default_site_id(sites)
+    return {
+        "id": sid,
+        "display_name": f"New site ({sid})",
+        "out_dir": f"{sid}-out",
+        "wordpress_url": "https://",
+        "wordpress_user": "",
+        "wordpress_app_password": "",
+    }
+
+
+_A1_CONFIG_MODULES: dict = {}
+_site_config_lock = threading.Lock()
+
+
+def _a1_config_module_for_pipeline_folder(folder: str):
+    p = os.path.join(_APP_ROOT, folder, "a1_config.py")
+    if not os.path.isfile(p):
+        return None
+    if folder in _A1_CONFIG_MODULES:
+        return _A1_CONFIG_MODULES[folder]
+    mname = "a1_config__" + re.sub(r"[^a-zA-Z0-9_]+", "_", folder)
+    spec = importlib.util.spec_from_file_location(mname, p)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    _A1_CONFIG_MODULES[folder] = mod
+    return mod
 
 
 def load_project_folders() -> list:
@@ -1121,6 +1290,234 @@ def stream_single():
         ),
         mimetype="text/event-stream",
     )
+
+
+@app.route("/api/site-config")
+def api_site_config():
+    """
+    Merged config for one dashboard log card (same as subprocess would see for PINTEREST_SITE_ID).
+    Query: ?project=<label or log_id> — same value as the START / stream-single buttons.
+    """
+    project = (request.args.get("project") or "").strip()
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"error": "Unknown project"}), 404
+    u = _unit_by_label(project)
+    if not u:
+        return jsonify({"error": "Unknown project"}), 404
+    folder = (u.get("folder") or "").strip() or "A1-Pinterest_01"
+    with _site_config_lock:
+        old_sid = os.environ.get("PINTEREST_SITE_ID")
+        e = u.get("env") or {}
+        try:
+            if "PINTEREST_SITE_ID" in e:
+                os.environ["PINTEREST_SITE_ID"] = str(e["PINTEREST_SITE_ID"])
+            else:
+                os.environ.pop("PINTEREST_SITE_ID", None)
+            mod = _a1_config_module_for_pipeline_folder(folder)
+            if mod is None or not hasattr(mod, "resolved_runtime_snapshot"):
+                return jsonify({"error": "a1_config not found in " + folder}), 500
+            snap = mod.resolved_runtime_snapshot()
+            snap["unit"] = {
+                "folder": folder,
+                "label": u.get("label"),
+                "log_id": u.get("log_id"),
+                "subprocess_env": e,
+            }
+            return jsonify(snap)
+        finally:
+            if old_sid is not None:
+                os.environ["PINTEREST_SITE_ID"] = old_sid
+            else:
+                os.environ.pop("PINTEREST_SITE_ID", None)
+
+
+@app.route("/api/site-editor", methods=["GET", "POST"])
+def api_site_editor():
+    """
+    GET: merged snapshot + raw sites.json row for this dashboard project (for Info / edit modal).
+    POST JSON { "project": "<label>", "raw_site": { ... } } — writes that row to config/sites.json.
+    """
+    if request.method == "GET":
+        project = (request.args.get("project") or "").strip()
+        if not project or not is_allowed_project_label(project):
+            return jsonify({"error": "Unknown project"}), 404
+        u = _unit_by_label(project)
+        if not u:
+            return jsonify({"error": "Unknown project"}), 404
+        folder = (u.get("folder") or "").strip() or "A1-Pinterest_01"
+        idx = _site_index_by_project_label(project)
+        raw_site = None
+        if idx is not None:
+            sites = _load_sites_file_app().get("sites") or []
+            if 0 <= idx < len(sites) and isinstance(sites[idx], dict):
+                raw_site = copy.deepcopy(sites[idx])
+        with _site_config_lock:
+            old_sid = os.environ.get("PINTEREST_SITE_ID")
+            e = u.get("env") or {}
+            try:
+                if raw_site and str(raw_site.get("id", "")).strip():
+                    os.environ["PINTEREST_SITE_ID"] = str(raw_site.get("id")).strip()
+                elif "PINTEREST_SITE_ID" in e:
+                    os.environ["PINTEREST_SITE_ID"] = str(e["PINTEREST_SITE_ID"])
+                else:
+                    os.environ.pop("PINTEREST_SITE_ID", None)
+                mod = _a1_config_module_for_pipeline_folder(folder)
+                if mod is None or not hasattr(mod, "resolved_runtime_snapshot"):
+                    return jsonify({"error": "a1_config not found in " + folder}), 500
+                snap = mod.resolved_runtime_snapshot()
+            finally:
+                if old_sid is not None:
+                    os.environ["PINTEREST_SITE_ID"] = old_sid
+                else:
+                    os.environ.pop("PINTEREST_SITE_ID", None)
+        return jsonify(
+            {
+                "project": project,
+                "snapshot": snap,
+                "raw_site": raw_site,
+                "can_edit_sites_row": raw_site is not None,
+            }
+        )
+    # POST
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Send JSON: { project, raw_site }"}), 400
+    project = (data.get("project") or "").strip()
+    raw_site = data.get("raw_site")
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"error": "Unknown project"}), 404
+    if not isinstance(raw_site, dict):
+        return jsonify({"error": "raw_site must be a JSON object"}), 400
+    if not str(raw_site.get("id", "")).strip():
+        return jsonify({"error": "raw_site.id is required"}), 400
+    doc = _load_sites_file_app()
+    if not isinstance(doc, dict):
+        return jsonify({"error": "sites.json is invalid"}), 500
+    sites = doc.get("sites")
+    if not isinstance(sites, list):
+        return jsonify({"error": "sites.json has no sites array"}), 500
+    idx = _site_index_by_project_label(project)
+    if idx is None or idx >= len(sites):
+        return jsonify({"error": "Project row not found in sites.json"}), 404
+    old_row = sites[idx] if isinstance(sites[idx], dict) else {}
+    merged = copy.deepcopy(raw_site) if isinstance(raw_site, dict) else {}
+    for k in _SITE_SECRET_REUSE_KEYS:
+        v = (merged.get(k) if k in merged else None)
+        t = (str(v).strip() if v is not None else "")
+        if t:
+            continue
+        if k in old_row and (old_row.get(k) is not None) and str(old_row.get(k) or "").strip() != "":
+            merged[k] = old_row[k]
+    sites[idx] = merged
+    doc["sites"] = sites
+    doc.setdefault("pipeline_code_folder", "A1-Pinterest_01")
+    try:
+        _write_sites_doc(doc)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "message": "config/sites.json updated for this project row."})
+
+
+@app.route("/manage_sites", methods=["GET", "POST"])
+def manage_sites():
+    if request.method == "POST":
+        act = (request.form.get("action") or "save").strip()
+        if act == "add":
+            data = _load_sites_file_app()
+            if not isinstance(data, dict):
+                data = {}
+            sites = data.get("sites")
+            if not isinstance(sites, list):
+                sites = []
+            sites.append(_default_new_site(sites))
+            data["sites"] = sites
+            data["pipeline_code_folder"] = (str(data.get("pipeline_code_folder") or "A1-Pinterest_01").strip() or "A1-Pinterest_01")
+            try:
+                _write_sites_doc(data)
+            except OSError as e:
+                flash("Could not save sites.json: " + str(e), "error")
+                return redirect(url_for("manage_sites"))
+            flash("New project added. Edit fields below, then save all.", "success")
+            return redirect(url_for("manage_sites"))
+        if act == "delete":
+            did = (request.form.get("site_id") or "").strip()
+            if did:
+                data = _load_sites_file_app()
+                sites = [s for s in (data.get("sites") or []) if isinstance(s, dict) and str(s.get("id", "")) != did]
+                data["sites"] = sites
+                data.setdefault("pipeline_code_folder", "A1-Pinterest_01")
+                try:
+                    _write_sites_doc(data)
+                except OSError as e:
+                    flash("Could not save sites.json: " + str(e), "error")
+                    return redirect(url_for("manage_sites"))
+                flash("Removed project " + did, "success")
+            return redirect(url_for("manage_sites"))
+        # full save
+        n = int(request.form.get("site_count", 0) or 0)
+        pl = (request.form.get("pipeline_code_folder") or "").strip() or "A1-Pinterest_01"
+        old_list = _load_sites_file_app().get("sites") or []
+        if not isinstance(old_list, list):
+            old_list = []
+        old_by_id: Dict[str, dict] = {
+            str(s.get("id")): s for s in old_list if isinstance(s, dict) and s.get("id")
+        }
+        seen: set = set()
+        sites_out: List[dict] = []
+        for i in range(n):
+            sub_id = (request.form.get(f"site_{i}_id") or "").strip()
+            old = old_by_id.get(sub_id, {})
+            try:
+                one = _site_from_form(request.form, i, old)
+            except ValueError as e:
+                flash(str(e), "error")
+                return redirect(url_for("manage_sites"))
+            if not (one or {}).get("id"):
+                continue
+            if one["id"] in seen:
+                flash("Duplicate site id: " + str(one["id"]), "error")
+                return redirect(url_for("manage_sites"))
+            seen.add(one["id"])
+            sites_out.append(one)
+        if not sites_out:
+            flash("At least one site with an id is required.", "error")
+            return redirect(url_for("manage_sites"))
+        doc = {"pipeline_code_folder": pl, "sites": sites_out}
+        try:
+            _write_sites_doc(doc)
+        except OSError as e:
+            flash("Could not write config/sites.json: " + str(e), "error")
+            return redirect(url_for("manage_sites"))
+        flash(
+            "config/sites.json saved. Refresh the dashboard; restart the app if IMAGINE group buttons should match the new site list.",
+            "success",
+        )
+        return redirect(url_for("manage_sites"))
+    d = _load_sites_file_app()
+    if not isinstance(d, dict) or "sites" not in d or not isinstance(d.get("sites"), list):
+        d = {"pipeline_code_folder": "A1-Pinterest_01", "sites": []}
+    d.setdefault("pipeline_code_folder", "A1-Pinterest_01")
+    sites_view: List[dict] = []
+    for s in d.get("sites") or []:
+        if not isinstance(s, dict):
+            continue
+        sv = dict(s)
+        st = s.get("settings")
+        sv["_settings_json"] = (
+            json.dumps(st, ensure_ascii=False, indent=2) if isinstance(st, (dict, list)) else ""
+        )
+        pr = s.get("prompts")
+        sv["_prompts_json"] = (
+            json.dumps(pr, ensure_ascii=False, indent=2) if isinstance(pr, (dict, list)) else ""
+        )
+        sites_view.append(sv)
+    return render_template(
+        "manage_sites.html",
+        data=d,
+        sites_view=sites_view,
+        site_count=len(sites_view),
+    )
+
 
 # -------------------- WP UPLOAD (pool 10 ب 10) --------------------
 @app.route("/stream-all-wp-upload")
@@ -1929,20 +2326,21 @@ def index():
         log_boxes += f"""
           <div class="col-lg-6 mb-4">
             <div class="card h-100">
-              <div class="card-header">
+              <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-1">
                 <h6 class="mb-0 text-secondary">{title} Log</h6>
+                <button type="button" class="btn btn-sm btn-outline-info" title="Edit this project in sites.json (tabbed: WordPress, API, Start, a2, pipeline, …)" onclick='showSiteConfigInfo({titlej})'>Info</button>
               </div>
               <div class="card-body overflow-auto" style="height:200px;" id="log_{lid}"></div>
               <div class="card-footer">
-                <button class="btn btn-sm btn-primary project-action" onclick="startProjectAction({lidj}, {titlej}, 'start', this)">START</button>
-                <button class="btn btn-sm btn-secondary project-action" onclick="startProjectAction({lidj}, {titlej}, 'json', this)">JSON</button>
-                <button class="btn btn-sm btn-warning project-action" onclick="startProjectAction({lidj}, {titlej}, 'prompt', this)">PROMPT</button>
-                <button class="btn btn-sm btn-info project-action" onclick="startProjectAction({lidj}, {titlej}, 'imagine', this)">IMAGINE</button>
-                <button class="btn btn-sm btn-success project-action" onclick="startProjectAction({lidj}, {titlej}, 'article', this)">ARTICLE</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'pin_data', this)">PIN DATA</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'pin_image', this)">PIN IMAGE</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'wp_upload', this)">WP UPLOAD</button>
-                <button class="btn btn-sm btn-dark project-action" onclick="startProjectAction({lidj}, {titlej}, 'pin_bulk', this)">PIN BULK</button>
+                <button class="btn btn-sm btn-primary project-action" onclick='startProjectAction({lidj}, {titlej}, "start", this)'>START</button>
+                <button class="btn btn-sm btn-secondary project-action" onclick='startProjectAction({lidj}, {titlej}, "json", this)'>JSON</button>
+                <button class="btn btn-sm btn-warning project-action" onclick='startProjectAction({lidj}, {titlej}, "prompt", this)'>PROMPT</button>
+                <button class="btn btn-sm btn-info project-action" onclick='startProjectAction({lidj}, {titlej}, "imagine", this)'>IMAGINE</button>
+                <button class="btn btn-sm btn-success project-action" onclick='startProjectAction({lidj}, {titlej}, "article", this)'>ARTICLE</button>
+                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_data", this)'>PIN DATA</button>
+                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_image", this)'>PIN IMAGE</button>
+                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
+                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
               </div>
             </div>
           </div>
@@ -2052,6 +2450,11 @@ def index():
         .number-button.finished {{ background-color: #28c76f; }}
         #previewTable td {{ padding: 5px; vertical-align: middle; }}
         #previewTable button {{ margin-left: 10px; }}
+        #siteConfigModal .modal-dialog {{ max-width: min(1140px, 96vw); margin-left: auto; margin-right: auto; }}
+        #siteConfigModal .nav-tabs .nav-link {{ font-weight: 600; font-size: 0.9rem; padding: 0.45rem 0.7rem; white-space: nowrap; }}
+        #siteConfigModal .site-editor-top-tabs {{ border-bottom: 0; flex-wrap: nowrap; }}
+        #siteConfigModal .site-editor-form-tab-content {{ min-height: 12rem; }}
+        #siteConfigModal #siteEditorFormPane label {{ font-size: 0.8rem; margin-bottom: 0.1rem; }}
       </style>
       <script>
         var source = null;
@@ -2286,6 +2689,505 @@ def index():
             buttons.forEach(function(b) {{ b.disabled = false; }});
           }};
         }}
+
+        var _siteEditorProject = "";
+        var _siteEditorBase = null;
+        var _siteEditorRawDirty = false;
+        var PROMPT_FORM_KEYS = ["a1_start", "a2_json", "a2_prompt", "a4_articles", "a5_pin_data", "a8_pin_bulk"];
+        var _siteEditorPromptFieldSchema = null;
+        function _promptGroupContainerId(pr) {{
+          if (pr === "a1_start") return "ed_pr_sub_start";
+          if (pr === "a2_json" || pr === "a2_prompt") return "ed_pr_sub_a2";
+          if (pr === "a4_articles" || pr === "a5_pin_data" || pr === "a8_pin_bulk") return "ed_pr_sub_pipe";
+          return "ed_pr_sub_other";
+        }}
+        function _promptFieldDomId(pr, path) {{ return "edpf_" + pr + "__" + String(path).replace(/\\./g, "__"); }}
+        function _fieldIsNonEmpty(f, el) {{
+          if (!el) return false;
+          if (f.kind === "bool") return !!el.checked;
+          if (f.kind === "number") return String(el.value).trim() !== "";
+          return String(el.value || "").trim() !== "";
+        }}
+        function renderPromptsFromSchema(snap) {{
+          var sch = (snap && snap.prompts_inline_field_schema) || null;
+          window._siteEditorPromptFieldSchema = sch;
+          var ids = ["ed_pr_sub_start", "ed_pr_sub_a2", "ed_pr_sub_pipe", "ed_pr_sub_other"];
+          ids.forEach(function(id) {{ var n = document.getElementById(id); if (n) n.innerHTML = ""; }});
+          var oLbl = document.getElementById("ed_pr_sub_other_lbl");
+          if (oLbl) oLbl.classList.add("d-none");
+          if (!sch || typeof sch !== "object") {{
+            var n0 = document.getElementById("ed_pr_sub_start");
+            if (n0) n0.innerHTML = '<p class="text-warning small">No prompt field schema. Add <code>config/prompts/*.json</code> in the repo.</p>';
+            return;
+          }}
+          var order = Object.keys(sch);
+          order.sort();
+          for (var oi = 0; oi < order.length; oi++) {{
+            var pr = order[oi];
+            var gid = _promptGroupContainerId(pr);
+            var c = document.getElementById(gid);
+            if (gid === "ed_pr_sub_other" && oLbl) oLbl.classList.remove("d-none");
+            if (!c) continue;
+            var block = document.createElement("div");
+            block.className = "mb-3 border-bottom pb-2";
+            var title = document.createElement("div");
+            title.className = "fw-bold text-secondary small";
+            title.textContent = pr;
+            block.appendChild(title);
+            var layerP = document.createElement("p");
+            layerP.className = "form-text small mb-2";
+            layerP.id = "ed_src_pr_" + pr;
+            layerP.style.fontSize = "0.68rem";
+            block.appendChild(layerP);
+            var flist = sch[pr] || [];
+            for (var fi = 0; fi < flist.length; fi++) {{
+              var f = flist[fi];
+              if (!f || !f.path) continue;
+              var pid = _promptFieldDomId(pr, f.path);
+              var wrap = document.createElement("div");
+              wrap.className = "mb-2";
+              var lab = document.createElement("label");
+              lab.className = "form-label small text-muted d-block mb-0";
+              lab.setAttribute("for", pid);
+              lab.textContent = f.path + "  (" + (f.kind || "text") + ")";
+              wrap.appendChild(lab);
+              var el;
+              var knd = f.kind || "text";
+              if (knd === "bool") {{
+                el = document.createElement("input");
+                el.type = "checkbox";
+                el.className = "form-check-input";
+                el.id = pid;
+              }} else if (knd === "number") {{
+                el = document.createElement("input");
+                el.type = "number";
+                el.step = "any";
+                el.className = "form-control form-control-sm";
+                el.id = pid;
+              }} else if (knd === "textarea" || knd === "json" || knd === "lines") {{
+                el = document.createElement("textarea");
+                el.className = "form-control form-control-sm" + (knd === "json" || knd === "lines" ? " font-monospace" : "");
+                el.id = pid;
+                el.spellcheck = false;
+                if (knd === "json") el.rows = 5;
+                else if (knd === "lines") el.rows = 4;
+                else el.rows = 3;
+              }} else {{
+                el = document.createElement("input");
+                el.type = "text";
+                el.className = "form-control form-control-sm";
+                el.id = pid;
+                el.spellcheck = false;
+              }}
+              wrap.appendChild(el);
+              var effHint = document.createElement("p");
+              effHint.className = "form-text text-muted mb-0 d-none";
+              effHint.id = "edeff_" + pr + "__" + String(f.path).replace(/\\./g, "__");
+              effHint.style.fontSize = "0.68rem";
+              effHint.setAttribute("aria-hidden", "true");
+              wrap.appendChild(effHint);
+              block.appendChild(wrap);
+            }}
+            c.appendChild(block);
+          }}
+        }}
+        function _getNested(obj, path) {{
+          if (!obj || !path) return undefined;
+          var c = obj;
+          var p = path.split(".");
+          for (var i = 0; i < p.length; i++) {{ if (c == null) return undefined; c = c[p[i]]; }}
+          return c;
+        }}
+        function _setNested(obj, path, val) {{
+          if (!obj || !path) return;
+          var p = path.split(".");
+          var c = obj;
+          for (var i = 0; i < p.length - 1; i++) {{
+            var k = p[i];
+            if (!c[k] || typeof c[k] !== "object" || c[k] === null) c[k] = {{}};
+            c = c[k];
+          }}
+          c[p[p.length - 1]] = val;
+        }}
+        function _removeNestedPath(obj, path) {{
+          if (!obj || !path) return;
+          var p = path.split(".");
+          function walk(o, d) {{
+            if (o == null || typeof o !== "object") return;
+            if (d === p.length - 1) {{ delete o[p[d]]; return; }}
+            if (!(p[d] in o)) return;
+            var ch = o[p[d]];
+            walk(ch, d + 1);
+            if (ch && typeof ch === "object" && !Array.isArray(ch) && !Object.keys(ch).length) delete o[p[d]];
+          }}
+          walk(obj, 0);
+        }}
+        function _pruneEmpty(obj) {{
+          if (obj == null || typeof obj !== "object" || Array.isArray(obj)) return;
+          for (var k in obj) {{ if (Object.prototype.hasOwnProperty.call(obj, k)) _pruneEmpty(obj[k]); }}
+          for (var k2 in obj) {{
+            if (Object.prototype.hasOwnProperty.call(obj, k2)) {{
+              var v = obj[k2];
+              if (v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length) delete obj[k2];
+            }}
+          }}
+        }}
+        function _isDeepEmptyObject(o) {{
+          if (o == null) return true;
+          if (typeof o !== "object" || Array.isArray(o)) return false;
+          return Object.keys(o).length === 0;
+        }}
+        function _fillPromptFieldsFromRow(s) {{
+          if (!s || typeof s !== "object") return;
+          var sch = window._siteEditorPromptFieldSchema;
+          if (!sch) return;
+          var pm = s.prompts || {{}};
+          Object.keys(sch).forEach(function(pr) {{
+            (sch[pr] || []).forEach(function(f) {{
+              var el = document.getElementById(_promptFieldDomId(pr, f.path));
+              if (!el) return;
+              var node = pm[pr];
+              var v = _getNested(node, f.path);
+              var knd = f.kind || "text";
+              if (knd === "bool") {{ el.checked = !!v; return; }}
+              if (knd === "number") {{
+                el.value = (v != null && v !== "" && !isNaN(Number(v))) ? String(v) : "";
+                return;
+              }}
+              if (knd === "lines" && v && Array.isArray(v)) {{ el.value = v.join("\\n"); return; }}
+              if (knd === "json") {{
+                el.value = (v == null) ? "" : JSON.stringify(v, null, 2);
+                return;
+              }}
+              el.value = (v == null) ? "" : String(v);
+            }});
+          }});
+        }}
+        function _readPromptsFromFormInto(bp, b) {{
+          var sch = window._siteEditorPromptFieldSchema;
+          if (!sch) return;
+          Object.keys(sch).forEach(function(name) {{
+            var fields = sch[name] || [];
+            if (!fields.length) return;
+            var anySet = fields.some(function(f) {{
+              return _fieldIsNonEmpty(f, document.getElementById(_promptFieldDomId(name, f.path)));
+            }});
+            if (!anySet) {{ delete bp[name]; return; }}
+            var m = (b.prompts && b.prompts[name] && typeof b.prompts[name] === "object")
+              ? JSON.parse(JSON.stringify(b.prompts[name])) : {{}};
+            fields.forEach(function(f) {{
+              var e2 = document.getElementById(_promptFieldDomId(name, f.path));
+              if (!e2) return;
+              var knd = f.kind || "text";
+              if (!_fieldIsNonEmpty(f, e2)) {{
+                if (f.path.indexOf(".") === -1) delete m[f.path];
+                else {{ _removeNestedPath(m, f.path); _pruneEmpty(m); }}
+                return;
+              }}
+              if (knd === "bool") {{ _setNested(m, f.path, !!e2.checked); return; }}
+              if (knd === "number") {{
+                var n = Number(e2.value);
+                if (isNaN(n)) throw new Error("prompts." + name + " " + f.path + ": not a number");
+                _setNested(m, f.path, n);
+                return;
+              }}
+              if (knd === "lines") {{
+                var lines = String(e2.value).split(/\\r?\\n/).map(function(x) {{ return x.trim(); }}).filter(Boolean);
+                _setNested(m, f.path, lines);
+                return;
+              }}
+              if (knd === "json") {{
+                try {{ _setNested(m, f.path, JSON.parse(e2.value.trim())); }}
+                catch (err) {{ throw new Error("prompts." + name + " " + f.path + ": " + (err.message || err)); }}
+                return;
+              }}
+              _setNested(m, f.path, String(e2.value));
+            }});
+            _pruneEmpty(m);
+            if (_isDeepEmptyObject(m) || (typeof m === "object" && !Object.keys(m).length)) delete bp[name];
+            else bp[name] = m;
+          }});
+        }}
+        var PROVENANCE_FIELD_IDS = [
+          "wordpress_url", "wordpress_user", "wordpress_app_password", "openai_api_key", "openai_model",
+          "useapi_token", "useapi_midjourney_channel", "r2_account_id", "r2_access_key_id", "r2_secret_access_key",
+          "r2_bucket", "r2_public_base_url"
+        ];
+        function _applyProvenanceToForm(snap) {{
+          var prov = (snap && snap.keys_provenance) || {{}};
+          PROVENANCE_FIELD_IDS.forEach(function(k) {{
+            var e = document.getElementById("ed_src_" + k);
+            if (e) e.textContent = prov[k] ? ("Key: " + k + " — " + prov[k]) : "";
+          }});
+          var ph = (snap && snap.prompts_form_hints) || {{}};
+          PROMPT_FORM_KEYS.forEach(function(name) {{
+            var e = document.getElementById("ed_src_pr_" + name);
+            if (e) e.textContent = ph[name] ? ("Layers: " + ph[name]) : "";
+          }});
+        }}
+        function _promptPathHasRowOverride(s, pr, path) {{
+          if (!s || !pr || !path) return false;
+          var node = s.prompts && s.prompts[pr];
+          if (node == null || typeof node !== "object") return false;
+          return _getNested(node, path) !== undefined;
+        }}
+        function _strEffForUi(v) {{
+          if (v === null || v === undefined) return "";
+          if (typeof v === "object") return JSON.stringify(v, null, 2);
+          if (typeof v === "boolean") return v ? "true" : "false";
+          return String(v);
+        }}
+        function _applyEffectivePromptPlaceholders(snap, s) {{
+          var eff = (snap && snap.prompts_effective_by_path) || null;
+          var excl = (snap && snap.prompts_excluding_row_inline_by_path) || null;
+          if (!eff || typeof eff !== "object") return;
+          if (!excl) excl = {{}};
+          var sch = window._siteEditorPromptFieldSchema;
+          if (!sch) return;
+          Object.keys(sch).forEach(function(pr) {{
+            var pmap = (eff[pr] && typeof eff[pr] === "object") ? eff[pr] : {{}};
+            var xmap = (excl[pr] && typeof excl[pr] === "object") ? excl[pr] : {{}};
+            (sch[pr] || []).forEach(function(f) {{
+              if (!f || !f.path) return;
+              var el = document.getElementById(_promptFieldDomId(pr, f.path));
+              if (!el) return;
+              var hintId = "edeff_" + pr + "__" + String(f.path).replace(/\\./g, "__");
+              var hint = document.getElementById(hintId);
+              if (!Object.prototype.hasOwnProperty.call(pmap, f.path)) {{
+                if (f.kind === "bool") el.removeAttribute("title");
+                else {{ el.placeholder = ""; el.removeAttribute("title"); }}
+                if (hint) {{ hint.textContent = ""; hint.classList.add("d-none"); }}
+                return;
+              }}
+              var pe = pmap[f.path];
+              var xb = Object.prototype.hasOwnProperty.call(xmap, f.path) ? xmap[f.path] : undefined;
+              var full = _strEffForUi(pe);
+              var fullBase = (xb === undefined) ? "" : _strEffForUi(xb);
+              var knd = f.kind || "text";
+              var hasO = _promptPathHasRowOverride(s, pr, f.path);
+              if (knd === "bool") {{
+                if (hint) {{
+                  if (!hasO) {{ hint.textContent = "No per-row value — effective merged: " + (pe ? "true" : "false") + "."; hint.classList.remove("d-none"); }}
+                  else {{ hint.textContent = (xb === undefined) ? "Row overrides. No file baseline for this key (inline-only or nested)." : ("Row sets explicit checkbox. From file layers (no row inline): " + (xb ? "true" : "false") + "."); hint.classList.remove("d-none"); }}
+                }}
+                el.setAttribute("title", hasO
+                  ? ((xb === undefined) ? "Effective merged (includes row): " + full : ("From file layers (no row inline `prompts`): " + fullBase + " — effective with row: " + full))
+                  : ("Effective merged: " + full));
+                return;
+              }}
+              if (!hasO) {{
+                el.placeholder = (full.length > 220) ? (full.slice(0, 217) + "…") : full;
+                el.setAttribute("title", "Merged when the row has no key for " + f.path + " (hover for full if truncated).\\n" + full);
+                if (hint) {{ hint.textContent = (full.length > 160) ? ("Effective merged: " + full.slice(0, 157) + "…") : ("Effective merged: " + full); hint.classList.remove("d-none"); }}
+              }} else {{
+                el.placeholder = "";
+                el.setAttribute("title", (xb === undefined) ? "Row overrides. Effective at this path: " + full
+                  : "Row inline overrides. From file layers (no `prompts` in row): " + fullBase + "\\n--\\nWith row, effective: " + full);
+                if (hint) {{ var hb = (fullBase.length > 100) ? fullBase.slice(0, 97) + "…" : fullBase; hint.textContent = (xb === undefined) ? "Row overrides. No separate file-baseline for this key." : ("Row overrides. File-layer baseline: " + hb); hint.classList.remove("d-none"); }}
+              }}
+            }});
+          }});
+        }}
+        function siteEditorApplyKeepSecretsFromBase(base, o) {{
+          if (!base || !o || typeof o !== "object") return;
+          var keys = [
+            "wordpress_app_password", "openai_api_key", "useapi_token", "useapi_midjourney_channel",
+            "r2_account_id", "r2_access_key_id", "r2_secret_access_key", "r2_bucket", "r2_public_base_url"
+          ];
+          keys.forEach(function(k) {{
+            var t = o[k] != null ? String(o[k]).trim() : "";
+            if (t) return;
+            if (base[k] != null && String(base[k]).trim() !== "") o[k] = base[k];
+          }});
+        }}
+        function _getV(id) {{ var e = document.getElementById(id); return e ? (e.value || "").trim() : ""; }}
+        function _setV(id, v) {{ var e = document.getElementById(id); if (e) e.value = (v != null && v !== undefined) ? String(v) : ""; }}
+        function _rowStr(s, k) {{
+          if (!s || typeof s !== "object" || !k) return "";
+          var x = s[k];
+          if (x == null) return "";
+          return String(x).trim();
+        }}
+        function _setPh(id, text) {{
+          var e = document.getElementById(id);
+          if (!e) return;
+          e.placeholder = text != null ? String(text) : "";
+          if (text) e.setAttribute("title", "Effective merged (what the run uses): " + String(text).slice(0, 400));
+          else e.removeAttribute("title");
+        }}
+        function _fillOrPlaceholder(s, kf, rowKey, elId) {{
+          var r = _rowStr(s, rowKey);
+          if (r) {{ _setV(elId, r); _setPh(elId, ""); return; }}
+          _setV(elId, "");
+          var m = (kf && kf[rowKey] != null) ? kf[rowKey] : null;
+          var hint = (m != null && String(m).trim() !== "") ? String(m) : "";
+          if (!hint) hint = "(not on this row — use merged keys: open the API & R2 tab for placeholders / Source lines.)";
+          _setPh(elId, hint);
+        }}
+        function _fillSecretOrPh(s, kf, rowKey, elId) {{
+          var r = _rowStr(s, rowKey);
+          if (r) {{ _setV(elId, r); _setPh(elId, "leave blank=keep; replace to change in row"); return; }}
+          _setV(elId, "");
+          var m = (kf && kf[rowKey] != null) ? kf[rowKey] : null;
+          var hint = (m != null && String(m).trim() !== "")
+            ? String(m)
+            : "(not on row — merged from shared / project / env. See the API & R2 tab. Leave empty to not store in row.)";
+          _setPh(elId, hint);
+        }}
+        function siteEditorFillForm(s, snap) {{
+          if (!s || typeof s !== "object") return;
+          var kf = (snap && snap.keys && typeof snap.keys === "object") ? snap.keys : {{}};
+          _setV("ed_id", s.id);
+          _setV("ed_display_name", s.display_name);
+          _setV("ed_out_dir", s.out_dir);
+          _setV("ed_start_file", s.start_file);
+          _setV("ed_log_id", s.log_id);
+          _setV("ed_prompts_dir", s.prompts_dir);
+          _fillOrPlaceholder(s, kf, "wordpress_url", "ed_wordpress_url");
+          _fillOrPlaceholder(s, kf, "wordpress_user", "ed_wordpress_user");
+          _setV("ed_wordpress_app_password", "");
+          _setPh("ed_wordpress_app_password", _rowStr(s, "wordpress_app_password")
+            ? "leave blank=keep; replace to change in row"
+            : ((kf.wordpress_app_password != null && String(kf.wordpress_app_password).trim() !== "")
+                ? String(kf.wordpress_app_password)
+                : "blank=keep; effective from merged keys (if set)"));
+          _fillSecretOrPh(s, kf, "openai_api_key", "ed_openai_api_key");
+          _fillOrPlaceholder(s, kf, "openai_model", "ed_openai_model");
+          _fillSecretOrPh(s, kf, "useapi_token", "ed_useapi_token");
+          _fillOrPlaceholder(s, kf, "useapi_midjourney_channel", "ed_useapi_midjourney_channel");
+          _fillOrPlaceholder(s, kf, "r2_account_id", "ed_r2_account_id");
+          _fillSecretOrPh(s, kf, "r2_access_key_id", "ed_r2_access_key_id");
+          _fillSecretOrPh(s, kf, "r2_secret_access_key", "ed_r2_secret_access_key");
+          _fillOrPlaceholder(s, kf, "r2_bucket", "ed_r2_bucket");
+          _fillOrPlaceholder(s, kf, "r2_public_base_url", "ed_r2_public_base_url");
+          var nss = document.getElementById("ed_no_shared_settings");
+          if (nss) nss.checked = !!s.no_shared_settings;
+          var nsp = document.getElementById("ed_no_shared_prompts");
+          if (nsp) nsp.checked = !!s.no_shared_prompts;
+          var es = s.settings;
+          _setV("ed_settings_json", (es && typeof es === "object") ? JSON.stringify(es, null, 2) : "");
+          var stSet = document.getElementById("ed_settings_json");
+          var mset = (snap && snap.settings) ? JSON.stringify(snap.settings, null, 2) : "";
+          if (!es || typeof es !== "object") {{
+            if (mset && mset.length) {{
+              _setPh("ed_settings_json", mset.length > 520 ? mset.slice(0, 517) + "…" : mset);
+              if (stSet) stSet.setAttribute("title", "Merged settings if you leave this field empty. Full JSON in hover.\\n" + mset);
+            }} else {{
+              _setPh("ed_settings_json", "Empty = use merged project settings. Paste {{}} to clear a previous row override.");
+              if (stSet) stSet.removeAttribute("title");
+            }}
+          }} else {{ _setPh("ed_settings_json", ""); if (stSet) stSet.removeAttribute("title"); }}
+          renderPromptsFromSchema(snap);
+          _fillPromptFieldsFromRow(s);
+          _applyProvenanceToForm(snap);
+          _applyEffectivePromptPlaceholders(snap, s);
+        }}
+        function siteEditorReadMerged() {{
+          var b = _siteEditorBase;
+          if (!b) return null;
+          var o = JSON.parse(JSON.stringify(b));
+          var sk = ["display_name","out_dir","start_file","log_id","prompts_dir","wordpress_url","wordpress_user","openai_model"];
+          sk.forEach(function(k) {{ var v = _getV("ed_" + k); if (v) o[k] = v; else if (b[k] !== undefined) o[k] = b[k]; }});
+          var pass = _getV("ed_wordpress_app_password");
+          if (pass) o.wordpress_app_password = pass;
+          var sec = ["openai_api_key","useapi_token","useapi_midjourney_channel","r2_account_id","r2_access_key_id","r2_secret_access_key","r2_bucket","r2_public_base_url"];
+          sec.forEach(function(k) {{
+            var v = _getV("ed_" + k);
+            if (v) o[k] = v; else if (b[k] !== undefined) o[k] = b[k];
+          }});
+          var nss = document.getElementById("ed_no_shared_settings");
+          if (nss && nss.checked) o.no_shared_settings = true; else delete o.no_shared_settings;
+          var nsp = document.getElementById("ed_no_shared_prompts");
+          if (nsp && nsp.checked) o.no_shared_prompts = true; else delete o.no_shared_prompts;
+          var stEl = document.getElementById("ed_settings_json");
+          var st = (stEl && stEl.value) ? stEl.value.trim() : "";
+          if (st) {{ try {{ o.settings = JSON.parse(st); }} catch (e) {{ throw new Error("settings JSON: " + e.message); }} }}
+          else {{ if (b.settings) o.settings = JSON.parse(JSON.stringify(b.settings)); else delete o.settings; }}
+          var bp = (b.prompts && typeof b.prompts === "object") ? JSON.parse(JSON.stringify(b.prompts)) : {{}};
+          _readPromptsFromFormInto(bp, b);
+          if (Object.keys(bp).length) o.prompts = bp; else delete o.prompts;
+          if (!_getV("ed_id")) {{ throw new Error("id is required"); }}
+          o.id = _getV("ed_id");
+          return o;
+        }}
+        function showSiteConfigInfo(projectLabel) {{
+          _siteEditorProject = projectLabel;
+          _siteEditorBase = null;
+          _siteEditorRawDirty = false;
+          var fe = document.getElementById("siteEditorFetchErr");
+          var ta = document.getElementById("siteEditorRaw");
+          var saveBtn = document.getElementById("siteEditorSaveBtn");
+          var formPane = document.getElementById("siteEditorFormPane");
+          var formMissing = document.getElementById("siteEditorFormMissing");
+          var titleEl = document.getElementById("siteConfigModalLabel");
+          if (titleEl) titleEl.textContent = "Project — " + projectLabel;
+          if (fe) {{ fe.classList.add("d-none"); fe.textContent = ""; }}
+          if (ta) {{ ta.value = ""; ta.disabled = true; }}
+          if (formPane) formPane.classList.add("d-none");
+          if (formMissing) {{ formMissing.classList.add("d-none"); }}
+          if (saveBtn) saveBtn.disabled = true;
+          var mEl = document.getElementById("siteConfigModal");
+          if (!mEl) return;
+          if (typeof bootstrap === "undefined") {{
+            if (fe) {{ fe.classList.remove("d-none"); fe.textContent = "Bootstrap is not loaded."; }}
+            return;
+          }}
+          new bootstrap.Modal(mEl).show();
+          var tabP = document.getElementById("tab-se-proj");
+          if (tabP) {{ var tr = new bootstrap.Tab(tabP); tr.show(); }}
+          fetch("/api/site-editor?project=" + encodeURIComponent(projectLabel))
+            .then(function(r) {{ if (!r.ok) return r.text().then(function(t) {{ throw new Error(t || "HTTP " + r.status); }}); return r.json(); }})
+            .then(function(data) {{
+              if (fe) fe.classList.add("d-none");
+              if (data.raw_site) {{
+                _siteEditorBase = data.raw_site;
+                _siteEditorRawDirty = false;
+                siteEditorFillForm(data.raw_site, data.snapshot || null);
+                if (ta) {{ ta.value = JSON.stringify(data.raw_site, null, 2); ta.disabled = false; }}
+                if (formPane) formPane.classList.remove("d-none");
+                if (formMissing) formMissing.classList.add("d-none");
+                if (saveBtn) saveBtn.disabled = false;
+              }} else {{
+                if (ta) {{ ta.value = ""; }}
+                if (formMissing) formMissing.classList.remove("d-none");
+              }}
+            }})
+            .catch(function(e) {{ var fe2 = document.getElementById("siteEditorFetchErr"); if (fe2) {{ fe2.classList.remove("d-none"); fe2.textContent = "Error: " + (e && e.message ? e.message : e); }} }});
+        }}
+        function siteEditorSave() {{
+          if (!_siteEditorProject) return;
+          var obj = null;
+          var ta0 = document.getElementById("siteEditorRaw");
+          if (_siteEditorBase) {{
+            if (_siteEditorRawDirty && ta0 && !ta0.disabled && (ta0.value || "").trim()) {{
+              try {{
+                obj = JSON.parse(ta0.value.trim());
+                if (obj == null || typeof obj !== "object" || Array.isArray(obj)) throw new Error("Site must be a JSON object");
+                siteEditorApplyKeepSecretsFromBase(_siteEditorBase, obj);
+              }} catch (e) {{ alert(e.message || e); return; }}
+            }} else {{
+              try {{ obj = siteEditorReadMerged(); }} catch (e) {{ alert(e.message || e); return; }}
+            }}
+          }} else {{
+            if (!ta0 || !ta0.value || ta0.disabled) {{ alert("Nothing to save"); return; }}
+            try {{ obj = JSON.parse(ta0.value.trim()); }} catch (e) {{ alert("Invalid JSON: " + e); return; }}
+          }}
+          if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {{ alert("Site must be a JSON object"); return; }}
+          fetch("/api/site-editor", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ project: _siteEditorProject, raw_site: obj }})
+          }})
+            .then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error(j.error || r.status); return j; }}); }})
+            .then(function() {{ alert("Saved to config/sites.json. Refresh the page if the label changed."); }})
+            .catch(function(e) {{ alert("Save failed: " + e); }});
+        }}
+        document.addEventListener("DOMContentLoaded", function() {{
+          var fp = document.getElementById("siteEditorFormPane");
+          if (fp) fp.addEventListener("input", function() {{ _siteEditorRawDirty = false; }}, true);
+          var taR = document.getElementById("siteEditorRaw");
+          if (taR) taR.addEventListener("input", function() {{ _siteEditorRawDirty = true; }});
+        }});
       </script>
     </head>
     <body>
@@ -2296,6 +3198,7 @@ def index():
         </div>
         <ul>
           <li><a href="/"><i class='bx bx-home-alt'></i> Dashboard</a></li>
+          <li><a href="/manage_sites"><i class='bx bx-list-ul'></i> Projects (sites)</a></li>
           <li><a href="/manage_images"><i class='bx bx-image'></i> Manage Images</a></li>
           <li><a href="/manage_articles"><i class='bx bx-file'></i> Manage Articles</a></li>
         </ul>
@@ -2371,6 +3274,186 @@ def index():
 
         <div class="row">
           {log_boxes}
+        </div>
+
+        <div class="modal fade" id="siteConfigModal" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="siteConfigModalLabel">Project</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body p-0">
+                <div class="px-3 pt-2 pb-1 border-bottom bg-light">
+                  <div class="alert alert-info py-2 small mb-2">
+                    Edits the <strong>one site object</strong> in <code>config/sites.json</code>. Use the tabs: <strong>Project</strong> (ids, paths) → <strong>WordPress</strong> → <strong>API &amp; R2</strong> (IMAGINE / UseAPI) → <strong>Settings</strong> → <strong>Start (a1)</strong> → <strong>JSON (a2)</strong> (JSON + text prompts) → <strong>Pipeline (a4–a8)</strong> → <strong>Row JSON</strong>. <strong>Save</strong> stores the row. Empty fields and gray placeholders use merged values from shared + project + files; see “Layers” and hints under each prompt block.
+                  </div>
+                  <p id="siteEditorFetchErr" class="text-danger small mb-2 d-none" role="alert"></p>
+                  <p id="siteEditorFormMissing" class="text-warning small d-none mb-0">No <code>config/sites.json</code> row for this card. Add sites in <a href="/manage_sites" target="_blank">Projects (sites)</a>.</p>
+                </div>
+                <div id="siteEditorFormPane" class="d-none">
+                  <div class="overflow-x-auto border-bottom" style="white-space: nowrap;">
+                    <ul class="nav nav-tabs site-editor-top-tabs border-0 flex-nowrap px-2 pt-1 mb-0" id="siteEditorTopTabs" role="tablist" style="min-width: min-content; flex-wrap: nowrap;">
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="tab-se-proj" data-bs-toggle="tab" data-bs-target="#pane-se-proj" type="button" role="tab" aria-selected="true">Project</button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-se-wp" data-bs-toggle="tab" data-bs-target="#pane-se-wp" type="button" role="tab">WordPress</button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-se-api" data-bs-toggle="tab" data-bs-target="#pane-se-api" type="button" role="tab">API &amp; R2</button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-se-st" data-bs-toggle="tab" data-bs-target="#pane-se-st" type="button" role="tab">Settings</button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-se-p1" data-bs-toggle="tab" data-bs-target="#pane-se-p1" type="button" role="tab">a1 Start</button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-se-p2" data-bs-toggle="tab" data-bs-target="#pane-se-p2" type="button" role="tab">a2 JSON + prompt</button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-se-pp" data-bs-toggle="tab" data-bs-target="#pane-se-pp" type="button" role="tab">Pipeline a4–a8</button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-se-adv" data-bs-toggle="tab" data-bs-target="#pane-se-adv" type="button" role="tab">Row JSON</button>
+                      </li>
+                    </ul>
+                  </div>
+                  <div class="tab-content site-editor-form-tab-content px-3 py-2" id="siteEditorFormTabContent" style="max-height: min(62vh, 680px); overflow-y: auto;">
+                    <div class="tab-pane fade show active" id="pane-se-proj" role="tabpanel" aria-labelledby="tab-se-proj">
+                      <p class="text-muted small">Site <code>id</code> and output paths. Matches <code>config/sites.json</code> for this dashboard card.</p>
+                      <div class="row g-2">
+                        <div class="col-md-2 col-6"><label class="form-label">id</label><input id="ed_id" class="form-control form-control-sm" required /></div>
+                        <div class="col-md-3 col-6"><label class="form-label">display_name</label><input id="ed_display_name" class="form-control form-control-sm" /></div>
+                        <div class="col-md-3 col-6"><label class="form-label">out_dir</label><input id="ed_out_dir" class="form-control form-control-sm" /></div>
+                        <div class="col-md-2 col-6"><label class="form-label">start_file</label><input id="ed_start_file" class="form-control form-control-sm" placeholder="xlsx" /></div>
+                        <div class="col-md-2 col-6"><label class="form-label">log_id</label><input id="ed_log_id" class="form-control form-control-sm" /></div>
+                        <div class="col-md-3 col-6"><label class="form-label">prompts_dir</label><input id="ed_prompts_dir" class="form-control form-control-sm" placeholder="config/site_prompts/…" /></div>
+                      </div>
+                    </div>
+                    <div class="tab-pane fade" id="pane-se-wp" role="tabpanel" aria-labelledby="tab-se-wp">
+                      <h6 class="text-secondary small text-uppercase">WordPress</h6>
+                      <p class="text-muted small mb-2">Not in <code>shared_keys</code> — this row, or <code>WP_URL</code> / <code>WP_USER</code> / <code>WP_APP_PASSWORD</code> in env. Blank app password = keep the value already in <code>sites.json</code>.</p>
+                      <div class="row g-2">
+                        <div class="col-md-4">
+                          <label class="form-label small mb-0">Site URL <span class="text-muted">(wordpress_url)</span></label>
+                          <input id="ed_wordpress_url" class="form-control form-control-sm" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_wordpress_url" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label small mb-0">User</label>
+                          <input id="ed_wordpress_user" class="form-control form-control-sm" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_wordpress_user" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-5">
+                          <label class="form-label small mb-0">App password</label>
+                          <input id="ed_wordpress_app_password" class="form-control form-control-sm" type="text" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_wordpress_app_password" style="font-size:0.7rem"></p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="tab-pane fade" id="pane-se-api" role="tabpanel" aria-labelledby="tab-se-api">
+                      <h6 class="text-secondary small text-uppercase">OpenAI · UseAPI (IMAGINE) · R2</h6>
+                      <p class="text-muted small mb-2">IMAGINE / Midjourney actions use the <strong>MJ channel</strong> and <strong>UseAPI</strong> fields here. Gray placeholders: merged from <code>shared_keys.json</code> + project <code>keys.json</code> + this row. “Source” lines show where each key came from.</p>
+                      <div class="row g-2 mb-1">
+                        <div class="col-md-4">
+                          <label class="form-label small mb-0">OpenAI API key</label>
+                          <input id="ed_openai_api_key" class="form-control form-control-sm" type="text" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_openai_api_key" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-2">
+                          <label class="form-label small mb-0">Model</label>
+                          <input id="ed_openai_model" class="form-control form-control-sm" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_openai_model" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label small mb-0">UseAPI token</label>
+                          <input id="ed_useapi_token" class="form-control form-control-sm" type="text" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_useapi_token" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label small mb-0">Midjourney channel</label>
+                          <input id="ed_useapi_midjourney_channel" class="form-control form-control-sm" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_useapi_midjourney_channel" style="font-size:0.7rem"></p>
+                        </div>
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-md-2 col-6">
+                          <label class="form-label small mb-0">R2 account</label>
+                          <input id="ed_r2_account_id" class="form-control form-control-sm" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_r2_account_id" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-2 col-6">
+                          <label class="form-label small mb-0">R2 access key</label>
+                          <input id="ed_r2_access_key_id" class="form-control form-control-sm" type="text" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_r2_access_key_id" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-2 col-6">
+                          <label class="form-label small mb-0">R2 secret</label>
+                          <input id="ed_r2_secret_access_key" class="form-control form-control-sm" type="text" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_r2_secret_access_key" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-2 col-6">
+                          <label class="form-label small mb-0">R2 bucket</label>
+                          <input id="ed_r2_bucket" class="form-control form-control-sm" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_r2_bucket" style="font-size:0.7rem"></p>
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label small mb-0">R2 public URL</label>
+                          <input id="ed_r2_public_base_url" class="form-control form-control-sm" spellcheck="false" autocomplete="off" />
+                          <p class="form-text mb-0" id="ed_src_r2_public_base_url" style="font-size:0.7rem"></p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="tab-pane fade" id="pane-se-st" role="tabpanel" aria-labelledby="tab-se-st">
+                      <h6 class="text-secondary small text-uppercase">Settings merge + row object</h6>
+                      <p class="text-muted small mb-2">Toggles and optional per-row <code>settings</code> JSON. Empty = use merged project settings; placeholder shows the merged object.</p>
+                      <div class="border rounded p-2 mb-3 small">
+                        <div class="form-check mb-1">
+                          <input class="form-check-input" type="checkbox" id="ed_no_shared_settings" name="x" value="1" />
+                          <label class="form-check-label" for="ed_no_shared_settings"><code>no_shared_settings</code> — do not load <code>config/shared_settings.json</code> (use project <code>settings.json</code> + this row only).</label>
+                        </div>
+                        <div class="form-check mb-0">
+                          <input class="form-check-input" type="checkbox" id="ed_no_shared_prompts" name="x" value="1" />
+                          <label class="form-check-label" for="ed_no_shared_prompts"><code>no_shared_prompts</code> — do not load repo <code>config/prompts/*.json</code> (project <code>config/prompts</code> + <code>site_prompts/…</code> + row inline <code>prompts</code> still apply).</label>
+                        </div>
+                      </div>
+                      <label class="form-label small">Override <code>settings</code> (JSON) on this row</label>
+                      <textarea id="ed_settings_json" class="form-control form-control-sm font-monospace" rows="8" spellcheck="false" placeholder="{{}}"></textarea>
+                    </div>
+                    <div class="tab-pane fade" id="pane-se-p1" role="tabpanel" aria-labelledby="tab-se-p1">
+                      <h6 class="text-secondary small text-uppercase">START — a1_start</h6>
+                      <p class="text-muted small mb-2">Fields from <code>config/prompts/a1_start.json</code> shape. Merged on save with file layers; “Layers” under each name shows the merge order.</p>
+                      <div id="ed_pr_sub_start"></div>
+                    </div>
+                    <div class="tab-pane fade" id="pane-se-p2" role="tabpanel" aria-labelledby="tab-se-p2">
+                      <h6 class="text-secondary small text-uppercase">a2 — JSON + prompt (PROMPT / IMAGINE text)</h6>
+                      <p class="text-muted small mb-2"><code>a2_json</code> and <code>a2_prompt</code>: same names as the dashboard JSON / PROMPT steps. IMAGINE buttons use the UseAPI + Midjourney settings in <strong>API &amp; R2</strong>.</p>
+                      <div id="ed_pr_sub_a2"></div>
+                    </div>
+                    <div class="tab-pane fade" id="pane-se-pp" role="tabpanel" aria-labelledby="tab-se-pp">
+                      <h6 class="text-secondary small text-uppercase">a4, a5, a8 — articles, pin data, pin bulk</h6>
+                      <p class="text-muted small mb-2">Pipeline prompts (ARTICLE, PIN DATA, PIN BULK on the dashboard). “Other” captures any future prompt name not listed above.</p>
+                      <div id="ed_pr_sub_pipe" class="mb-2"></div>
+                      <p id="ed_pr_sub_other_lbl" class="text-muted small d-none">Other script prompt(s) in the repo</p>
+                      <div id="ed_pr_sub_other" class="mb-1"></div>
+                    </div>
+                    <div class="tab-pane fade" id="pane-se-adv" role="tabpanel" aria-labelledby="tab-se-adv">
+                      <h6 class="text-secondary small text-uppercase">Full row JSON</h6>
+                      <p class="text-muted small mb-2">The exact object saved in <code>config/sites.json</code>. If you edit here, the raw text wins on <strong>Save</strong> (unless the form is edited afterward — then the form merge is used). Leave secrets blank in the form to keep existing file values when saving from the form.</p>
+                      <textarea id="siteEditorRaw" class="form-control font-monospace" style="min-height: 200px; font-size: 11px;" spellcheck="false" disabled></textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="siteEditorSaveBtn" onclick="siteEditorSave()" disabled>Save to <code>config/sites.json</code></button>
+                <a href="/manage_sites" class="btn btn-outline-secondary" target="_blank" rel="noopener">Full projects form</a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+            </div>
+          </div>
         </div>
 
       </div>
