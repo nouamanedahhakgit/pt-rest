@@ -24,7 +24,7 @@ _PP4 = a1_config.load_prompts("a4_articles")
 # ===== Language and article (from config/settings.json) =====
 ARTICLE_LANGUAGE = str(_S4.get("article_language", "English"))
 # Per-site under ALL/{out_dir}/ (see config/sites.json + PINTEREST_SITE_ID)
-RECIPE_EXCEL = a1_config.all_output_join("images.xlsx")
+RECIPE_EXCEL = a1_config.all_output_join("Recipes.xlsx")
 OUTLINE_EXCEL = a1_config.all_output_join("outline_parts.xlsx")
 
 RECIPE_SHEET_NAME = str(_S4.get("a4_recipe_sheet", "Sheet1"))

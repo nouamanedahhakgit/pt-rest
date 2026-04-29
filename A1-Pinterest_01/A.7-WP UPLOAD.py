@@ -26,7 +26,7 @@ auth = HTTPBasicAuth(WP_USER, WP_APP_PASSWORD)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-EXCEL_PATH = a1_config.all_output_join("images.xlsx")
+EXCEL_PATH = a1_config.all_output_join("Recipes.xlsx")
 df = pd.read_excel(EXCEL_PATH)
 
 # --- Ensure required columns exist ---

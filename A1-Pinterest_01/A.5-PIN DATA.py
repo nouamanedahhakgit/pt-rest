@@ -317,7 +317,7 @@ def process_Recipes(input_file_path, output_file_path, api_key):
 # ================================
 if __name__ == "__main__":
     openai.api_key = OPENAI_API_KEY
-    _px = a1_config.all_output_join("images.xlsx")
+    _px = a1_config.all_output_join("Recipes.xlsx")
     input_file_path = _px
     output_file_path = _px
     process_Recipes(input_file_path, output_file_path, OPENAI_API_KEY)

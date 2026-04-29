@@ -1,0 +1,117 @@
+{
+  "a1_start": {
+    "repair_recipe": {
+      "max_tokens": 800,
+      "temperature": 0.2,
+      "system": "You are a strict recipe formatter. Do NOT change ingredients or instructions meaningfully. Only fix formatting and add missing metadata lines at the end. Calories MUST be present and should be clearly labeled as an estimate if uncertain.",
+      "user_template": "Here is a recipe text. Make it match EXACTLY this structure:\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ...\n\nInstructions:\n1. ...\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Keep Ingredients and Instructions the same (do not rewrite).\n- If any of Prep/Cook/Total/Course/Cuisine/Servings are missing, set them to N/A.\n- Calories MUST NOT be N/A. Provide an estimated calories number per serving, and write it like:\n  \"Calories: ~320 per serving\"\n- Output ONLY the recipe in that format. No markdown.\n\nRecipe Text:\n\"\"\"{recipe_text}\"\"\""
+    },
+    "generate_from_title": {
+      "max_tokens": 1200,
+      "temperature": 0.6,
+      "system": "You are a professional recipe writer. Follow the exact format. Calories line is REQUIRED and should be an estimate if needed.",
+      "user_template": "Create ONE unique recipe for this title:\n{title}\n\nReturn ONLY this structure (no markdown, no extra text):\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ingredient line\n- ingredient line\n\nInstructions:\n1. step\n2. step\n3. step\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Ingredients must be bullet lines starting with \"- \".\n- Instructions must be numbered (6–11 steps).\n- Calories MUST be present. If you can't know exactly, estimate and use \"~\" like:\n  Calories: ~320 per serving"
+    }
+  },
+  "a2_json": {
+    "system": "You are a culinary data formatter. From a given recipe text, output a STRICT JSON object matching the required schema. Output JSON only (no markdown).",
+    "json_schema_block": "Return a STRICT JSON with exactly these keys:\n{\n  \"name\": \"string (clean, no emojis, short and clear)\",\n  \"summary\": \"1-2 sentences\",\n  \"servings\": \"digits only\",\n  \"prep_time\": \"digits only (minutes)\",\n  \"cook_time\": \"digits only (minutes)\",\n  \"total_time\": \"digits only (minutes)\",\n  \"calories\": \"digits only (per unit mentioned in recipe line, usually per serving)\",\n  \"course\": \"Main Course or Side Dish or Dessert or Breakfast or Snack or Appetizer or Soup or Salad or Drink\",\n  \"cuisine\": \"e.g., Italian, American, German, Spanish, Brazilian, Mexican, Asian\",\n  \"keywords\": [\"3-8 short keywords\"],\n  \"notes\": \"short helpful note\",\n  \"ingredients\": [\n    {\"amount\": \"string (use unicode fractions like ½ ¼ ¾ ⅓ ⅔ ⅛ ⅜ ⅝ ⅞ when needed)\", \"unit\": \"string or empty\", \"name\": \"ingredient name\"}\n  ],\n  \"instructions\": [\n    \"step-by-step instructions, concise sentences (6-11 steps)\"\n  ]\n}\n\nRules:\n- Output MUST be VALID JSON only.\n- Times in JSON are digits only and in MINUTES. Convert if recipe says \"1 hour\" => 60, \"1 hour 15 minutes\" => 75.\n- Calories MUST be digits only (extract number even if recipe line has ~ or words like 'per cookie').\n- Do not add extra keys.\n",
+    "preamble": "Recipe Title (clean, no emojis): ",
+    "recipe_wrap_prefix": "\n\nRecipe Text:\n\"\"\"",
+    "recipe_wrap_suffix": "\"\"\"\n\n"
+  },
+  "a2_prompt": {
+    "main_dish_system": "Return ONLY one Midjourney prompt in English (no labels, no markdown). You MUST keep it policy-safe and food-only. Realistic, appetizing ULTRA close-up of the final plated dish. Serve in a clean white ceramic bowl or plate (shape may vary), on a white or light neutral surface. Tight composition filling ~90–100% of frame (partial plate crop OK), clear food texture, shallow depth of field, soft natural daylight, gentle shadows. Sharp focus at food center, slight 3/4 or eye-level angle. Exclude people, hands, faces, text, logos, and packaging. End with --v 6.1.",
+    "main_dish_user_prefix": "Recipe: ",
+    "ingredient_extract_system": "From the recipe, extract ONLY the main ingredient NAMES in English. Return a single comma-separated list of UNIQUE items (no duplicates at all). Do NOT include measurements, quantities, adjectives, or preparation words.",
+    "ingredient_scene_template": "{ingredients_csv}, ingredients-only, top-down flat lay, each ingredient appears once, neatly separated in small bowls and directly on the surface, wide framing with generous margins, clean spacing, light neutral background (soft gray or light beige) with subtle texture (stone or light wood), soft natural daylight, soft minimal shadows, -- no text, -- no labels, -- no logos, -- no packaging, -- minimal styling",
+    "allowed_food_style_fallback": "realistic, appetizing, food photography, shallow depth of field, soft natural daylight, clean minimal styling, no people, no text, no logos, no packaging",
+    "food_only_guard": "food-only scene, dish-focused, exclude people, exclude hands, exclude faces, no text, no labels, no logos, no packaging, kitchen or neutral surface only",
+    "sensitive_patterns": [
+      "\\b(gore|gory|blood\\b|bloody|dismember|beheading|corpse|kill|murder|suicide|self[-\\s]?harm|violence)\\b",
+      "\\b(nude|nudity|nsfw|porn|erotic|sexual|sex|sensual|fetish|boobs|nipple|butt|ass|lingerie)\\b",
+      "\\b(fuck|shit|bitch|bastard|slut|dick|cock|pussy|cunt)\\b",
+      "\\b(gun|rifle|pistol|weapon|grenade|missile|tank|gunmetal)\\b",
+      "\\b(hitler|nazi|swastika|terror|isis|politic(al)?|election|protest)\\b",
+      "\\b(teen|child|kid|minors?|age\\s*\\d{1,2}|young\\s+girl|young\\s+boy)\\b",
+      "\\b(drug|cocaine|heroin|weed|marijuana|alcohol|beer|wine|vodka)\\b",
+      "\\b(logo|watermark|caption|text\\s+overlay|typography)\\b"
+    ],
+    "soft_replacements": [
+      { "pattern": "\\bbloody\\b", "replace": "rich red" },
+      { "pattern": "\\bblood\\b", "replace": "rich red" },
+      { "pattern": "\\bgunmetal\\b", "replace": "charcoal gray" },
+      { "pattern": "\\bsexy\\b", "replace": "appealing" },
+      { "pattern": "\\bsensual\\b", "replace": "inviting" }
+    ],
+    "chat_max_tokens_default": 600,
+    "chat_temperature_default": 0.6,
+    "safe_max_tokens": 400,
+    "ingredient_extract_max_tokens": 220
+  },
+  "a4_articles": {
+    "outline": {
+      "max_tokens": 1000,
+      "user": "Create a DETAILED, LONG, SEO-optimized outline for a {total_words}-word recipe article based ONLY on the provided Recipe text and the Recipe Card.\n- Language: {article_language}.\n- STRICT DATA FIDELITY: Use ONLY information present in the Recipe for ingredients and steps.\n- STRICT CARD FIDELITY: For timings/servings/course/cuisine/calories use the Recipe Card EXACTLY. If any card field is N/A, treat it as 'Not specified in the recipe'.\n- Use H2/H3 only (no H1).\n- IMPORTANT: Do NOT prefix ANY headings with numbers, numerals, or roman numerals.\n- The outline MUST start EXACTLY with these H2 labels (no numbering):\n  ## Introduction\n  ## Recipe Overview\n  ## {ingredients_label}\n- Then include AT LEAST 10 additional H2 sections; each H2 should have 2–4 H3 subsections.\n- END with a neutral Conclusion summarizing taste/texture/timing in 2–4 sentences. NO CTAs.\n\n{card_context}\nRecipe:\n{recipe}",
+      "system": "You are a professional food blog writer. Write SEO-optimized, richly structured outlines in {article_language}. Never include CTAs. Base ingredients/steps strictly on the Recipe. For timings/servings/course/cuisine/calories use the Recipe Card exactly; if N/A say not specified. Never prefix headings with numbers."
+    },
+    "part1": {
+      "user": "Write PART 1 of a LONG, detailed SEO-optimized recipe article based ONLY on the provided Recipe text and Recipe Card.\n- Language: {article_language}.\n- TARGET LENGTH for Part 1: 900–1000 words (do not be brief).\n- STRICT: Use ONLY ingredients and steps present in the Recipe; no new ingredients, brands, or quantities not present.\n- STRICT CARD FIDELITY (MUST): For Prep/Cook/Total/Course/Cuisine/Servings/Calories, use the Recipe Card EXACTLY. If any card value is N/A, write 'Not specified in the recipe'. DO NOT estimate or invent.\n- The **very first line MUST be a single H1 in the exact form: '# {{Title}}'** with nothing before it.\n- H1 Title rules (VERY IMPORTANT):\n  • Be CLEAR and SPECIFIC about the recipe.\n  • Length: 6–12 words AND roughly 45–70 characters.\n  • Include the core recipe name as written in the Recipe.\n  • Allowed simple adjectives if true: Easy, Simple, Homemade, Quick.\n  • NO emojis, NO quotes, NO brackets, NO pipes/double dashes. Avoid dates/years/clickbait.\n  • Use natural Title Case or Sentence case.\n- Then follow this EXACT order using NON-NUMBERED headings:\n  ## Introduction — 2–4 short paragraphs that set context, taste, and when to serve.\n  ## Recipe Overview — MUST use EXACTLY the following bullets (copy them as-is, same order, same labels):\n{overview_lines}  IMPORTANT: Do NOT add or change any values in the bullets above.\n  ## {ingredients_label}\n     - Bullet list of ALL ingredients extracted from the Recipe ONLY.\n  ## Instructions — numbered, step-by-step, derived strictly from the Recipe.\n- After these, cover the remaining H2/H3 from the outline part with rich paragraphs.\n- Do NOT write a conclusion in Part 1. NO calls to action.\n\n{card_context}\nRecipe:\n{recipe_text}\n\nOutline Part 1:\n{outline_part}",
+      "system": "You are a professional food blog writer. Write long, SEO-friendly recipe articles in {article_language}. No CTAs. Derive ingredients/steps ONLY from the Recipe. Recipe Overview bullets MUST be copied exactly as provided. For Prep/Cook/Total/Course/Cuisine/Servings/Calories, you MUST use the Recipe Card exactly; if N/A say not specified. NEVER prefix any H2/H3 with numbers or roman numerals."
+    },
+    "part2": {
+      "user": "Write PART 2 (continuation) of the same LONG article. Do NOT repeat the title.\n- Language: {article_language}.\n- TARGET LENGTH for Part 2: 900–1000 words (do not be brief).\n- Use only H2/H3; continue from the outline. Avoid duplicating content from Part 1.\n- STRICT: Do NOT invent new ingredients or unprovided timings.\n- STRICT CARD FIDELITY: When mentioning timings/servings/course/cuisine/calories, use the Recipe Card values exactly. If card has N/A, write 'Not specified in the recipe'.\n- Conclusion: neutral 2–4 sentences. NO CTAs.\n- IMPORTANT: Do NOT prefix ANY headings with numbers.\n\n{card_context}\nRecipe:\n{recipe_text}\n\nOutline Part 2:\n{outline_part}",
+      "system": "Continue a long SEO-optimized recipe article in {article_language} using H2/H3 only. No CTAs. Do not invent new ingredients or timings. For Prep/Cook/Total/Course/Cuisine/Servings/Calories use the Recipe Card exactly; if N/A say not specified. NEVER prefix any H2/H3 with numbers or roman numerals."
+    }
+  },
+  "a5_pin_data": {
+    "recipe_title_pin": {
+      "max_tokens": 80,
+      "temperature": 0.7,
+      "system": "Write a short, catchy, and attractive recipe title in {article_language}. Output ONLY the title text with no quotes, emojis, hashtags, numbering, or extra lines. Aim for a compact length (ideally 4–7 words), natural and appetizing. No clickbait, no all-caps, keep proper capitalization."
+    },
+    "pinterest_title": {
+      "max_tokens": 120,
+      "system": "You create Pinterest Pin titles in {article_language}. Output ONLY the title text with no quotes, emojis, hashtags, or extra lines. Keep it under 100 characters, clear, engaging, and naturally include common Pinterest search keywords. Avoid hype, clickbait, or salesy wording.",
+      "user": "Create a clear and engaging Pinterest Pin title for this Recipe (write in {article_language}):\n\n{recipe}"
+    },
+    "pinterest_keywords": {
+      "max_tokens": 60,
+      "system": "Analyze the provided Recipe and extract 6 relevant keywords for Pinterest in {article_language}. Provide a comma-separated list of keywords without any additional text, emojis, or hashtags."
+    },
+    "pinterest_description": {
+      "max_tokens": 180,
+      "system": "You write Pinterest-friendly descriptions in {article_language}. Output only 2–3 sentences. Tone: clear, natural, engaging; keyword-rich without stuffing. Avoid hype/sales-driven phrases, hashtags, emojis, and special formatting.",
+      "user": "Using the following title and keywords, create a Pinterest-friendly description. Write in {article_language}.\n\n• Title: {title}\n• Keywords: {keywords}\n\nCompose 2–3 sentences that blend the keywords smoothly and evoke seasonal or emotional appeal."
+    },
+    "focus_keyphrase": {
+      "max_tokens": 300,
+      "system": "Analyze the provided Recipe and generate the most repeated focus keyphrase in {article_language} that best represents the main topic. The keyphrase should be concise, relevant, and SEO-optimized. Give me the result directly without any introductions or explanations."
+    },
+    "meta_description": {
+      "max_tokens": 300,
+      "system": "Create an SEO meta description in {article_language}. Target ~120 characters (max 140). Include the focus keyphrase naturally. Give me the result directly without any introductions or explanations."
+    },
+    "keyphrase_synonyms": {
+      "max_tokens": 300,
+      "system": "Provide synonyms for the given focus keyphrase in {article_language} to enhance SEO. Give me the result directly without any introductions or explanations, don't use bullet points, don't use numbers.",
+      "user": "3 Synonyms for the focus keyphrase: {focuskw}"
+    },
+    "categorize": {
+      "max_tokens": 5,
+      "temperature": 0,
+      "system": "You are a world-class culinary classification expert.\n\nYour ONLY job is to classify a recipe BASED ONLY ON ITS TITLE into exactly one category.\nDo NOT rely only on keywords. Use your knowledge of culinary context, eating habits, and recipe types.\n\nCategories (choose EXACTLY ONE, lowercase only):\n\n1. drinks → any liquid-based beverage primarily consumed as a drink (smoothies, juices, tea, coffee, shakes, cocktails, lattes, milkshakes, mocktails). Consider also recipes like soups that are drunk, but not main savory dishes.\n2. dessert → typically eaten after a meal or as a sweet treat. This includes cakes, cookies, brownies, puddings, mousses, sweet pastries, ice creams, tarts, or any indulgent sweet dish even if the title does not contain \"sweet\" or \"dessert\".\n3. appetizers → small portions, starters, finger foods, dips, snacks, or bites meant to be eaten before the main course.\n4. dinner → savory main dishes intended as the primary meal (pasta, rice, meat, chicken, fish, stews, casseroles, one-pot meals, soups eaten as main dishes).\n\nRules:\n- Base your decision only on the concept and type of dish implied by the title.\n- Ignore any keywords not relevant to the category definitions.\n- Return ONLY ONE WORD: drinks, dessert, appetizers, dinner.\n- Use lowercase.\n- NO punctuation, NO explanation, NO extra text.\n- If unsure, make the most likely choice based on common culinary understanding.\n",
+      "user": "Recipe title: {recipe}"
+    }
+  },
+  "a8_pin_bulk": {
+    "categorize_boards": {
+      "max_tokens": 50,
+      "temperature": 0,
+      "system": "You classify recipe/food texts into exactly ONE board from the list.",
+      "user_intro": "You are an assistant that categorizes food-related articles into one of the following Pinterest boards:\n",
+      "user_mid": ".\n\nAnalyze the following article and categorize it into one of these Pinterest boards.\n\n",
+      "user_suffix": "\n\nCategory:"
+    }
+  }
+}

@@ -88,7 +88,7 @@ r2 = boto3.client(
 # Paths
 # =============================
 input_excel = a1_config.all_output_join("Recipes.xlsx")
-output_excel = a1_config.all_output_join("images.xlsx")
+output_excel = a1_config.all_output_join("Recipes.xlsx")
 
 # =============================
 # Processing & Polling settings

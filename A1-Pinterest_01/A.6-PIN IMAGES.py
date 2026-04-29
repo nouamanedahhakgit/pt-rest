@@ -155,8 +155,8 @@ if __name__ == "__main__":
 
     line_spacing = 17
     jpeg_quality = 70
-    excel_file = a1_config.all_output_join("images.xlsx")
-    output_excel_file = a1_config.all_output_join("images.xlsx")
+    excel_file = a1_config.all_output_join("Recipes.xlsx")
+    output_excel_file = a1_config.all_output_join("Recipes.xlsx")
 
     try:
         df = pd.read_excel(excel_file)

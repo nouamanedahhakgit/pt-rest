@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Manage Recipes Files</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+  <style>
+    body { background-color: #f8f9fd; }
+    .materio-sidebar { width: 250px; min-height: 100vh; background: #fff; border-right: 1px solid #eceef1; position: fixed; left: 0; top: 0; padding: 20px; }
+    .materio-sidebar .sidebar-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 1rem; display: flex; align-items: center; }
+    .materio-sidebar ul { list-style: none; padding: 0; }
+    .materio-sidebar ul li { margin: 10px 0; }
+    .materio-sidebar ul li a { text-decoration: none; color: #626262; font-weight: 500; display: block; padding: 8px 10px; border-radius: 6px; }
+    .materio-sidebar ul li a:hover, .materio-sidebar ul li a.active { background: #7367F0; color: #fff; }
+    .navbar-materio { margin-left: 270px; background: #fff; border-bottom: 1px solid #eceef1; height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; position: fixed; width: calc(100% - 270px); top: 0; z-index: 1000; }
+    .materio-content { margin-left: 270px; padding: 20px; margin-top: 80px; max-width: 1300px; }
+    .table-wrap { max-height: 520px; overflow: auto; background: #fff; border: 1px solid #eceef1; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="materio-sidebar">
+    <div class="sidebar-title"><i class="bx bx-grid-alt"></i><span>AUTOMATION</span></div>
+    <ul>
+      <li><a href="/"><i class="bx bx-home-alt"></i> Dashboard</a></li>
+      <li><a href="/manage_sites"><i class="bx bx-list-ul"></i> Projects (sites)</a></li>
+      <li><a href="/manage_starts"><i class="bx bx-table"></i> Manage STARTS</a></li>
+      <li><a href="/manage_recipes" class="active"><i class="bx bx-food-menu"></i> Manage Recipes</a></li>
+      <li><a href="/manage_images"><i class="bx bx-image"></i> Manage Images</a></li>
+      <li><a href="/manage_articles"><i class="bx bx-file"></i> Manage Articles</a></li>
+    </ul>
+  </div>
+
+  <div class="navbar-materio">
+    <h5 class="m-0">Manage Recipes.xlsx by Project</h5>
+  </div>
+
+  <div class="materio-content">
+    <div id="msg"></div>
+    <div class="row g-3">
+      <div class="col-lg-4">
+        <div class="card">
+          <div class="card-header"><strong>Projects</strong></div>
+          <div class="card-body">
+            <button id="btnRefresh" class="btn btn-outline-primary w-100 mb-2"><i class="bx bx-refresh"></i> Refresh Projects</button>
+            <select id="projectSelect" class="form-select mb-2" size="12"></select>
+            <div id="projectMeta" class="small text-muted"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-8">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Rows</strong>
+            <div class="d-flex align-items-center gap-2">
+              <button id="btnSaveChanges" class="btn btn-sm btn-primary">Save Edited Rows</button>
+              <button id="btnSelectAll" class="btn btn-sm btn-outline-secondary">Select All (Page)</button>
+              <button id="btnUnselectAll" class="btn btn-sm btn-outline-secondary">Unselect All</button>
+              <button id="btnDeleteSelected" class="btn btn-sm btn-outline-danger">Delete Selected Rows</button>
+              <button id="btnClearFile" class="btn btn-sm btn-outline-danger">Clear All File Data</button>
+              <button id="btnPrev" class="btn btn-sm btn-outline-secondary">Prev</button>
+              <button id="btnNext" class="btn btn-sm btn-outline-secondary">Next</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div id="rowsMeta" class="small text-muted mb-2"></div>
+            <div class="table-wrap">
+              <table class="table table-sm table-striped mb-0" id="rowsTable">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentProject = "";
+    let currentOffset = 0;
+    const pageSize = 100;
+    let currentHeaders = [];
+    let currentRows = [];
+    let dirtyRows = new Set();
+
+    function showMsg(text, kind) {
+      const cls = kind === "error" ? "alert-danger" : "alert-success";
+      document.getElementById("msg").innerHTML =
+        `<div class="alert ${cls} alert-dismissible fade show" role="alert">${text}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+    }
+
+    async function loadProjects() {
+      const res = await fetch("/api/recipes-files");
+      const js = await res.json();
+      const sel = document.getElementById("projectSelect");
+      sel.innerHTML = "";
+      (js.items || []).forEach((it) => {
+        const opt = document.createElement("option");
+        opt.value = it.project;
+        const mark = it.exists ? "" : " [missing]";
+        opt.textContent = `${it.project}${mark} (rows:${it.row_count}, titles:${it.title_count})`;
+        opt.dataset.filePath = it.file_path || "";
+        opt.dataset.exists = it.exists ? "1" : "0";
+        sel.appendChild(opt);
+      });
+      if (sel.options.length > 0) {
+        if (!currentProject) currentProject = sel.options[0].value;
+        sel.value = currentProject;
+        onSelectProject();
+      } else {
+        document.getElementById("projectMeta").textContent = "No projects";
+        renderRows([], []);
+      }
+    }
+
+    function renderRows(headers, rows) {
+      currentHeaders = headers || [];
+      currentRows = rows || [];
+      dirtyRows = new Set();
+      const thead = document.querySelector("#rowsTable thead");
+      const tbody = document.querySelector("#rowsTable tbody");
+      thead.innerHTML = "";
+      tbody.innerHTML = "";
+      if (!headers || headers.length === 0) return;
+
+      const trh = document.createElement("tr");
+      trh.innerHTML = "<th>sel</th><th>excel_row</th>";
+      headers.forEach((h) => {
+        const th = document.createElement("th");
+        th.textContent = h;
+        trh.appendChild(th);
+      });
+      const thAct = document.createElement("th");
+      thAct.textContent = "actions";
+      trh.appendChild(thAct);
+      thead.appendChild(trh);
+
+      rows.forEach((r) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td><input type="checkbox" class="row-check" data-row="${r.excel_row ?? ""}"></td><td>${r.excel_row ?? ""}</td>`;
+        headers.forEach((h, idx) => {
+          const td = document.createElement("td");
+          const v = r[h];
+          td.textContent = v == null ? "" : String(v);
+          td.contentEditable = "true";
+          td.classList.add("cell-edit");
+          td.dataset.header = h;
+          td.dataset.row = String(r.excel_row ?? "");
+          td.dataset.col = String(idx + 1);
+          tr.appendChild(td);
+        });
+        const tdAct = document.createElement("td");
+        tdAct.innerHTML = `<button class="btn btn-sm btn-outline-danger btn-del-row" data-row="${r.excel_row ?? ""}">Delete</button>`;
+        tr.appendChild(tdAct);
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function loadRows() {
+      if (!currentProject) return;
+      const q = `project=${encodeURIComponent(currentProject)}&offset=${currentOffset}&limit=${pageSize}`;
+      const res = await fetch(`/api/recipes-read?${q}`);
+      const js = await res.json();
+      if (!js.ok) {
+        showMsg(js.error || "Read failed", "error");
+        renderRows([], []);
+        return;
+      }
+      document.getElementById("rowsMeta").textContent =
+        `${js.project} | showing ${js.rows.length} rows | total ${js.total_rows} | offset ${js.offset}`;
+      renderRows(js.headers || [], js.rows || []);
+    }
+
+    function onSelectProject() {
+      const sel = document.getElementById("projectSelect");
+      currentProject = sel.value || "";
+      currentOffset = 0;
+      const opt = sel.options[sel.selectedIndex];
+      if (opt) {
+        const exists = opt.dataset.exists === "1" ? "exists" : "missing";
+        document.getElementById("projectMeta").textContent = `${exists}: ${opt.dataset.filePath || ""}`;
+      }
+      loadRows();
+    }
+
+    async function saveDirtyRows() {
+      if (!currentProject) return showMsg("Select a project first", "error");
+      const rows = Array.from(dirtyRows).map((x) => Number(x)).filter((x) => x >= 2);
+      if (rows.length === 0) return showMsg("No edited rows to save", "error");
+      let okCount = 0;
+      for (const rr of rows) {
+        const tr = document.querySelector(`#rowsTable tbody .row-check[data-row="${rr}"]`)?.closest("tr");
+        if (!tr) continue;
+        const values = {};
+        const valuesByCol = {};
+        tr.querySelectorAll(".cell-edit").forEach((td) => {
+          const h = td.dataset.header || "";
+          if (!h) return;
+          const vv = (td.textContent || "").trim();
+          values[h] = vv;
+          const cc = Number(td.dataset.col || 0);
+          if (cc >= 1) valuesByCol[String(cc)] = vv;
+        });
+        const res = await fetch("/api/recipes-update-row", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project: currentProject, excel_row: rr, values, values_by_col: valuesByCol }),
+        });
+        const js = await res.json();
+        if (js.ok) okCount += 1;
+      }
+      showMsg(`Saved ${okCount}/${rows.length} edited row(s)`, okCount === rows.length ? "ok" : "error");
+      await loadRows();
+      await loadProjects();
+    }
+
+    async function deleteRows(excelRows) {
+      const rows = (excelRows || []).map((x) => Number(x)).filter((x) => x >= 2);
+      if (rows.length === 0) return showMsg("No rows selected", "error");
+      if (!confirm(`Delete ${rows.length} row(s) from ${currentProject}?`)) return;
+      const res = await fetch("/api/recipes-delete-rows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: currentProject, excel_rows: rows }),
+      });
+      const js = await res.json();
+      if (!js.ok) return showMsg(js.error || "Delete failed", "error");
+      showMsg(`Deleted ${js.deleted_rows} row(s)`, "ok");
+      await loadRows();
+      await loadProjects();
+    }
+
+    async function clearFileData() {
+      if (!currentProject) return showMsg("Select a project first", "error");
+      if (!confirm(`Clear ALL data rows for ${currentProject}? (Header row will stay)`)) return;
+      const res = await fetch("/api/recipes-clear-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: currentProject }),
+      });
+      const js = await res.json();
+      if (!js.ok) return showMsg(js.error || "Clear failed", "error");
+      showMsg(`Cleared ${js.cleared_rows} row(s)`, "ok");
+      currentOffset = 0;
+      await loadRows();
+      await loadProjects();
+    }
+
+    document.getElementById("btnRefresh").addEventListener("click", loadProjects);
+    document.getElementById("projectSelect").addEventListener("change", onSelectProject);
+    document.getElementById("btnPrev").addEventListener("click", () => {
+      currentOffset = Math.max(0, currentOffset - pageSize);
+      loadRows();
+    });
+    document.getElementById("btnNext").addEventListener("click", () => {
+      currentOffset += pageSize;
+      loadRows();
+    });
+    document.getElementById("btnSelectAll").addEventListener("click", () => {
+      document.querySelectorAll(".row-check").forEach((el) => { el.checked = true; });
+    });
+    document.getElementById("btnUnselectAll").addEventListener("click", () => {
+      document.querySelectorAll(".row-check").forEach((el) => { el.checked = false; });
+    });
+    document.getElementById("btnDeleteSelected").addEventListener("click", () => {
+      const els = document.querySelectorAll(".row-check:checked");
+      const rows = Array.from(els).map((el) => Number(el.getAttribute("data-row") || 0));
+      deleteRows(rows);
+    });
+    document.getElementById("btnSaveChanges").addEventListener("click", saveDirtyRows);
+    document.getElementById("btnClearFile").addEventListener("click", clearFileData);
+    document.querySelector("#rowsTable tbody").addEventListener("input", (ev) => {
+      const td = ev.target.closest(".cell-edit");
+      if (!td) return;
+      const rr = Number(td.dataset.row || 0);
+      if (rr >= 2) {
+        dirtyRows.add(rr);
+        td.style.backgroundColor = "#fff8e1";
+      }
+    });
+    document.querySelector("#rowsTable tbody").addEventListener("click", (ev) => {
+      const dBtn = ev.target.closest(".btn-del-row");
+      if (dBtn) return deleteRows([dBtn.getAttribute("data-row")]);
+    });
+
+    loadProjects();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

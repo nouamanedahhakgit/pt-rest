@@ -6,6 +6,7 @@ import queue
 import json
 import re
 import copy
+import fnmatch
 import importlib.util
 from flask import (
     Flask,
@@ -28,6 +29,7 @@ from typing import Callable, Any, Optional, Dict, List
 
 
 app = Flask(__name__)
+app.secret_key = "dev"
 
 # ------------------------------------------------------------
 # !!! WARNING: This is not recommended for production usage !!!
@@ -334,6 +336,892 @@ def all_out_name_for_label(label: str) -> str:
     return f"{label}-out"
 
 
+def _project_excel_path_by_out_dir(out_dir: str) -> str:
+    """
+    Unified pipeline workbook:
+    - Prefer Recipes.xlsx (new single-file flow)
+    - Fallback to images.xlsx for backward compatibility
+    """
+    base = os.path.join(os.getcwd(), "ALL", out_dir)
+    recipes_path = os.path.join(base, "Recipes.xlsx")
+    if os.path.exists(recipes_path):
+        return recipes_path
+    return os.path.join(base, "images.xlsx")
+
+
+def _is_filled_excel_value(v) -> bool:
+    if v is None:
+        return False
+    s = str(v).strip()
+    if not s:
+        return False
+    return s.lower() != "nan"
+
+
+def _json_for_inline_script(obj) -> str:
+    """
+    JSON safe to paste inside HTML <script>...</script>.
+    Escapes '<' so '</script>' in data cannot terminate the script tag.
+    """
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
+
+
+_STARTS_TOTAL_CACHE = {"at": 0.0, "value": 0}
+_PROJECT_STATS_CACHE: dict = {}
+_GLOBAL_START_ROTATION = {"cursor": 0}
+
+
+def _total_titles_in_starts_cached(ttl_seconds: float = 10.0) -> int:
+    now = time.time()
+    at = float(_STARTS_TOTAL_CACHE.get("at", 0.0) or 0.0)
+    if now - at <= ttl_seconds:
+        return int(_STARTS_TOTAL_CACHE.get("value", 0) or 0)
+
+    starts_dir = os.path.join(_APP_ROOT, "STARTS")
+    if not os.path.isdir(starts_dir):
+        _STARTS_TOTAL_CACHE["at"] = now
+        _STARTS_TOTAL_CACHE["value"] = 0
+        return 0
+
+    total = 0
+    xlsx_files = [
+        f
+        for f in os.listdir(starts_dir)
+        if f.lower().endswith(".xlsx")
+        and not f.startswith("~$")
+        and not f.startswith("._")
+        and os.path.isfile(os.path.join(starts_dir, f))
+    ]
+    for fn in xlsx_files:
+        fp = os.path.join(starts_dir, fn)
+        try:
+            for rec in _read_titles_from_start_workbook(fp):
+                if str(rec.get("title", "")).strip():
+                    total += 1
+        except Exception:
+            continue
+
+    _STARTS_TOTAL_CACHE["at"] = now
+    _STARTS_TOTAL_CACHE["value"] = int(total)
+    return int(total)
+
+
+def _project_column_stats(project_label: str) -> dict:
+    out_dir = all_out_name_for_label(project_label)
+    file_path = _project_excel_path_by_out_dir(out_dir)
+    if not os.path.exists(file_path):
+        return {"ok": False, "error": "excel_not_found", "file_path": file_path}
+    try:
+        mtime = float(os.path.getmtime(file_path))
+    except OSError:
+        mtime = 0.0
+    global_total = _total_titles_in_starts_cached()
+    ck = str(project_label)
+    cached = _PROJECT_STATS_CACHE.get(ck)
+    if (
+        isinstance(cached, dict)
+        and float(cached.get("mtime", -1.0)) == mtime
+        and (time.time() - float(cached.get("at", 0.0))) <= 8.0
+    ):
+        return dict(cached.get("data") or {})
+    try:
+        wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+    except Exception as e:
+        return {"ok": False, "error": f"open_failed: {e}", "file_path": file_path}
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 0)
+        max_row = int(sh.max_row or 0)
+        if max_col <= 0:
+            return {"ok": True, "total_titles": 0, "columns": []}
+        # Fast path: read headers + rows with values_only to avoid per-cell access cost.
+        header_values = next(
+            sh.iter_rows(min_row=1, max_row=1, min_col=1, max_col=max_col, values_only=True),
+            tuple(),
+        )
+        headers = []
+        for i in range(max_col):
+            hv = header_values[i] if i < len(header_values) else None
+            h = str(hv).strip() if hv is not None else f"Column_{i+1}"
+            headers.append(h or f"Column_{i+1}")
+
+        total_rows = max(0, max_row - 1)
+        filled_counts = [0 for _ in range(max_col)]
+        title_filled_rows = 0
+        title_col_idx = -1
+        for i, h in enumerate(headers):
+            if str(h).strip().lower() == "title":
+                title_col_idx = i
+                break
+        if total_rows > 0:
+            for row_vals in sh.iter_rows(
+                min_row=2,
+                max_row=max_row,
+                min_col=1,
+                max_col=max_col,
+                values_only=True,
+            ):
+                ln = len(row_vals)
+                for i in range(max_col):
+                    v = row_vals[i] if i < ln else None
+                    if _is_filled_excel_value(v):
+                        filled_counts[i] += 1
+                if title_col_idx >= 0:
+                    tv = row_vals[title_col_idx] if title_col_idx < ln else None
+                    if _is_filled_excel_value(tv):
+                        title_filled_rows += 1
+        # Denominator is number of rows with a non-empty Title.
+        total_for_stats = int(title_filled_rows if title_filled_rows > 0 else total_rows)
+        # Show full pipeline coverage: expected columns first, then any extra columns from the sheet.
+        expected_columns = [
+            "Title",
+            "Recipe",
+            "Generated At",
+            "Json Recipe",
+            "Prompt",
+            "Prompt Image Ingredients",
+            "main_image",
+            "image_1",
+            "image_2",
+            "image_3",
+            "image_4",
+            "statu",
+            "error",
+            "main_image_ingredients",
+            "image_ing_1",
+            "image_ing_2",
+            "image_ing_3",
+            "image_ing_4",
+            "statu_ing",
+            "article",
+            "recipe_title_pin",
+            "pinterest_title",
+            "pinterest_description",
+            "pinterest_keywords",
+            "_yoast_wpseo_focuskw",
+            "_yoast_wpseo_metadesc",
+            "_yoast_wpseo_keywordsynonyms",
+            "categories",
+            "pinterest_image",
+            "output_name",
+        ]
+
+        by_lower = {str(h).strip().lower(): i for i, h in enumerate(headers)}
+        cols = []
+        seen_lowers = set()
+
+        for name in expected_columns:
+            lk = name.strip().lower()
+            seen_lowers.add(lk)
+            if lk in by_lower:
+                idx = by_lower[lk]
+                cols.append({"name": headers[idx], "filled": int(filled_counts[idx]), "total": int(total_for_stats)})
+            else:
+                cols.append({"name": name, "filled": 0, "total": int(total_for_stats)})
+
+        for i, name in enumerate(headers):
+            lk = str(name).strip().lower()
+            if lk in seen_lowers:
+                continue
+            cols.append({"name": name, "filled": int(filled_counts[i]), "total": int(total_for_stats)})
+        data = {
+            "ok": True,
+            "file_path": file_path,
+            "total_titles": int(total_rows),
+            "global_total_titles": int(global_total),
+            "columns": cols,
+        }
+        _PROJECT_STATS_CACHE[ck] = {
+            "at": time.time(),
+            "mtime": mtime,
+            "global_total_titles": int(global_total),
+            "data": data,
+        }
+        return data
+    finally:
+        wb.close()
+
+
+def _project_column_details(project_label: str, column_name: str) -> dict:
+    out_dir = all_out_name_for_label(project_label)
+    file_path = _project_excel_path_by_out_dir(out_dir)
+    if not os.path.exists(file_path):
+        return {"ok": False, "error": "excel_not_found", "file_path": file_path}
+    try:
+        wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+    except Exception as e:
+        return {"ok": False, "error": f"open_failed: {e}", "file_path": file_path}
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 0)
+        max_row = int(sh.max_row or 0)
+        if max_col <= 0:
+            return {"ok": True, "column": column_name, "rows": [], "total_titles": 0}
+
+        headers = []
+        for c in range(1, max_col + 1):
+            hv = sh.cell(row=1, column=c).value
+            h = str(hv).strip() if hv is not None else f"Column_{c}"
+            headers.append(h or f"Column_{c}")
+
+        hmap = {str(h).strip().lower(): i + 1 for i, h in enumerate(headers)}
+        req_col = hmap.get(str(column_name or "").strip().lower())
+        title_col = hmap.get("title", 1)
+        total_rows = max(0, max_row - 1)
+
+        rows = []
+        for r in range(2, max_row + 1):
+            title_v = sh.cell(row=r, column=title_col).value if title_col else None
+            title_s = str(title_v).strip() if title_v is not None else ""
+            if req_col:
+                val = sh.cell(row=r, column=req_col).value
+                val_s = str(val).strip() if val is not None else ""
+                filled = _is_filled_excel_value(val)
+            else:
+                val_s = ""
+                filled = False
+            rows.append(
+                {
+                    "row": r - 1,
+                    "title": title_s,
+                    "value": val_s,
+                    "filled": bool(filled),
+                }
+            )
+
+        return {
+            "ok": True,
+            "column": column_name,
+            "column_exists": bool(req_col),
+            "rows": rows,
+            "total_titles": int(total_rows),
+            "file_path": file_path,
+        }
+    finally:
+        wb.close()
+
+
+def _starts_dir_path() -> str:
+    return os.path.join(_APP_ROOT, "STARTS")
+
+
+def _safe_start_file_path(file_name: str) -> str:
+    base = os.path.basename(str(file_name or "").strip())
+    if not base:
+        raise ValueError("Missing file name")
+    if base != str(file_name or "").strip():
+        raise ValueError("Invalid file name")
+    if not base.lower().endswith(".xlsx"):
+        raise ValueError("File must end with .xlsx")
+    if base.startswith("~$"):
+        raise ValueError("Temporary Excel files are not allowed")
+    starts_dir = _starts_dir_path()
+    os.makedirs(starts_dir, exist_ok=True)
+    fp = os.path.abspath(os.path.join(starts_dir, base))
+    if os.path.dirname(fp) != os.path.abspath(starts_dir):
+        raise ValueError("Invalid file path")
+    return fp
+
+
+def _unique_headers(header_values: list) -> list:
+    """
+    Make duplicate Excel headers unique for JSON/table rendering.
+    Example: used, used, used -> used, used.1, used.2
+    """
+    out = []
+    counts = {}
+    for raw in header_values:
+        base = str(raw).strip() if raw is not None else ""
+        if not base:
+            base = "Column"
+        n = int(counts.get(base, 0))
+        if n <= 0:
+            name = base
+        else:
+            name = f"{base}.{n}"
+        counts[base] = n + 1
+        out.append(name)
+    return out
+
+
+@app.route("/api/starts-files")
+def api_starts_files():
+    pattern = (request.args.get("pattern") or "START*.xlsx").strip() or "START*.xlsx"
+    starts_dir = _starts_dir_path()
+    if not os.path.isdir(starts_dir):
+        return jsonify({"ok": True, "items": [], "starts_dir": starts_dir})
+    items = []
+    for fn in sorted(os.listdir(starts_dir), key=_natural_sort_key):
+        if not fn.lower().endswith(".xlsx"):
+            continue
+        if fn.startswith("~$") or fn.startswith("._") or fn.startswith("_"):
+            continue
+        if not fnmatch.fnmatch(fn.lower(), pattern.lower()):
+            continue
+        fp = os.path.join(starts_dir, fn)
+        row_count = 0
+        title_count = 0
+        try:
+            wb = openpyxl.load_workbook(fp, data_only=True, read_only=True)
+            try:
+                sh = wb.active
+                max_row = int(sh.max_row or 0)
+                row_count = max(0, max_row - 1)
+                max_col = int(sh.max_column or 0)
+                title_col = 1
+                for c in range(1, max_col + 1):
+                    hv = sh.cell(row=1, column=c).value
+                    if hv is not None and str(hv).strip().lower() == "title":
+                        title_col = c
+                        break
+                for r in range(2, max_row + 1):
+                    v = sh.cell(row=r, column=title_col).value
+                    if _is_filled_excel_value(v):
+                        title_count += 1
+            finally:
+                wb.close()
+        except Exception:
+            pass
+        items.append(
+            {
+                "name": fn,
+                "row_count": int(row_count),
+                "title_count": int(title_count),
+                "path": fp,
+            }
+        )
+    return jsonify({"ok": True, "items": items, "starts_dir": starts_dir, "pattern": pattern})
+
+
+@app.route("/api/starts-read")
+def api_starts_read():
+    file_name = (request.args.get("file") or "").strip()
+    try:
+        fp = _safe_start_file_path(file_name)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not os.path.isfile(fp):
+        return jsonify({"ok": False, "error": "File not found", "file": file_name}), 404
+
+    limit = int(request.args.get("limit", 200) or 200)
+    offset = int(request.args.get("offset", 0) or 0)
+    if limit < 1:
+        limit = 1
+    if limit > 2000:
+        limit = 2000
+    if offset < 0:
+        offset = 0
+
+    wb = openpyxl.load_workbook(fp, data_only=True, read_only=True)
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 0)
+        max_row = int(sh.max_row or 0)
+        raw_headers = []
+        if max_col > 0:
+            for c in range(1, max_col + 1):
+                hv = sh.cell(row=1, column=c).value
+                h = str(hv).strip() if hv is not None else f"Column_{c}"
+                raw_headers.append(h or f"Column_{c}")
+        headers = _unique_headers(raw_headers)
+
+        start_excel_row = 2 + offset
+        end_excel_row = min(max_row, start_excel_row + limit - 1)
+        rows = []
+        if max_row >= 2 and max_col > 0 and start_excel_row <= end_excel_row:
+            for r in range(start_excel_row, end_excel_row + 1):
+                row_obj = {"excel_row": int(r)}
+                for c in range(1, max_col + 1):
+                    key = headers[c - 1]
+                    row_obj[key] = sh.cell(row=r, column=c).value
+                rows.append(row_obj)
+        return jsonify(
+            {
+                "ok": True,
+                "file": file_name,
+                "headers": headers,
+                "rows": rows,
+                "total_rows": max(0, max_row - 1),
+                "offset": offset,
+                "limit": limit,
+            }
+        )
+    finally:
+        wb.close()
+
+
+@app.route("/api/starts-create", methods=["POST"])
+def api_starts_create():
+    data = request.get_json(force=True, silent=True) or {}
+    file_name = str(data.get("file") or "").strip()
+    headers = data.get("headers")
+    if not isinstance(headers, list) or not headers:
+        headers = ["Title"]
+    hdrs = [str(h).strip() for h in headers if str(h or "").strip()]
+    if not hdrs:
+        hdrs = ["Title"]
+    if not any(h.lower() == "title" for h in hdrs):
+        hdrs.insert(0, "Title")
+    try:
+        fp = _safe_start_file_path(file_name)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if os.path.exists(fp):
+        return jsonify({"ok": False, "error": "File already exists", "file": file_name}), 409
+    wb = openpyxl.Workbook()
+    try:
+        sh = wb.active
+        sh.title = "Titles"
+        for i, h in enumerate(hdrs, start=1):
+            sh.cell(row=1, column=i, value=h)
+        wb.save(fp)
+    finally:
+        wb.close()
+    return jsonify({"ok": True, "file": file_name, "path": fp, "headers": hdrs})
+
+
+@app.route("/api/starts-add-rows", methods=["POST"])
+def api_starts_add_rows():
+    data = request.get_json(force=True, silent=True) or {}
+    file_name = str(data.get("file") or "").strip()
+    titles = data.get("titles")
+    rows = data.get("rows")
+    try:
+        fp = _safe_start_file_path(file_name)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not os.path.isfile(fp):
+        return jsonify({"ok": False, "error": "File not found", "file": file_name}), 404
+
+    normalized_rows = []
+    if isinstance(titles, list):
+        for t in titles:
+            s = str(t or "").strip()
+            if s:
+                normalized_rows.append({"Title": s})
+    if isinstance(rows, list):
+        for one in rows:
+            if isinstance(one, dict):
+                obj = {}
+                for k, v in one.items():
+                    kk = str(k or "").strip()
+                    if not kk:
+                        continue
+                    obj[kk] = v
+                if obj:
+                    normalized_rows.append(obj)
+    if not normalized_rows:
+        return jsonify({"ok": False, "error": "Provide titles[] or rows[]"}), 400
+
+    wb = openpyxl.load_workbook(fp)
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 1)
+        header_to_col = {}
+        for c in range(1, max_col + 1):
+            hv = sh.cell(row=1, column=c).value
+            if hv is None:
+                continue
+            header_to_col[str(hv).strip().lower()] = c
+        if "title" not in header_to_col:
+            sh.cell(row=1, column=1, value="Title")
+            header_to_col["title"] = 1
+            if max_col < 1:
+                max_col = 1
+
+        def ensure_col(name: str) -> int:
+            nonlocal max_col
+            lk = str(name).strip().lower()
+            c0 = header_to_col.get(lk)
+            if c0:
+                return c0
+            max_col = max(max_col, int(sh.max_column or 1)) + 1
+            sh.cell(row=1, column=max_col, value=name)
+            header_to_col[lk] = max_col
+            return max_col
+
+        start_row = int(sh.max_row or 1) + 1
+        for i, row_obj in enumerate(normalized_rows):
+            rr = start_row + i
+            for k, v in row_obj.items():
+                col = ensure_col(k)
+                sh.cell(row=rr, column=col, value=v)
+        wb.save(fp)
+        return jsonify(
+            {
+                "ok": True,
+                "file": file_name,
+                "added_rows": len(normalized_rows),
+                "start_excel_row": int(start_row),
+                "end_excel_row": int(start_row + len(normalized_rows) - 1),
+            }
+        )
+    finally:
+        wb.close()
+
+
+@app.route("/api/starts-update-row", methods=["POST"])
+def api_starts_update_row():
+    data = request.get_json(force=True, silent=True) or {}
+    file_name = str(data.get("file") or "").strip()
+    excel_row = int(data.get("excel_row", 0) or 0)
+    values = data.get("values")
+    values_by_col = data.get("values_by_col")
+    if excel_row < 2:
+        return jsonify({"ok": False, "error": "excel_row must be >= 2"}), 400
+    if (not isinstance(values, dict) or not values) and (not isinstance(values_by_col, dict) or not values_by_col):
+        return jsonify({"ok": False, "error": "values or values_by_col is required"}), 400
+    try:
+        fp = _safe_start_file_path(file_name)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not os.path.isfile(fp):
+        return jsonify({"ok": False, "error": "File not found", "file": file_name}), 404
+
+    wb = openpyxl.load_workbook(fp)
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 1)
+        header_to_col = {}
+        for c in range(1, max_col + 1):
+            hv = sh.cell(row=1, column=c).value
+            if hv is None:
+                continue
+            header_to_col[str(hv).strip().lower()] = c
+
+        def ensure_col(name: str) -> int:
+            nonlocal max_col
+            lk = str(name or "").strip().lower()
+            if not lk:
+                raise ValueError("Invalid column name")
+            c0 = header_to_col.get(lk)
+            if c0:
+                return c0
+            max_col = max(max_col, int(sh.max_column or 1)) + 1
+            sh.cell(row=1, column=max_col, value=str(name).strip())
+            header_to_col[lk] = max_col
+            return max_col
+
+        if isinstance(values_by_col, dict) and values_by_col:
+            for k, v in values_by_col.items():
+                try:
+                    col = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if col < 1:
+                    continue
+                sh.cell(row=excel_row, column=col, value=v)
+        if isinstance(values, dict) and values:
+            for k, v in values.items():
+                col = ensure_col(str(k))
+                sh.cell(row=excel_row, column=col, value=v)
+        wb.save(fp)
+        return jsonify({"ok": True, "file": file_name, "excel_row": excel_row})
+    finally:
+        wb.close()
+
+
+@app.route("/api/starts-delete-rows", methods=["POST"])
+def api_starts_delete_rows():
+    data = request.get_json(force=True, silent=True) or {}
+    file_name = str(data.get("file") or "").strip()
+    rows = data.get("excel_rows")
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"ok": False, "error": "excel_rows list is required"}), 400
+    try:
+        fp = _safe_start_file_path(file_name)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not os.path.isfile(fp):
+        return jsonify({"ok": False, "error": "File not found", "file": file_name}), 404
+
+    to_delete = []
+    for r in rows:
+        try:
+            rr = int(r)
+        except (TypeError, ValueError):
+            continue
+        if rr >= 2:
+            to_delete.append(rr)
+    to_delete = sorted(set(to_delete), reverse=True)
+    if not to_delete:
+        return jsonify({"ok": False, "error": "No valid excel rows to delete"}), 400
+
+    wb = openpyxl.load_workbook(fp)
+    try:
+        sh = wb.active
+        deleted = 0
+        max_row = int(sh.max_row or 1)
+        for rr in to_delete:
+            if 2 <= rr <= max_row:
+                sh.delete_rows(rr, 1)
+                deleted += 1
+        wb.save(fp)
+        return jsonify({"ok": True, "file": file_name, "deleted_rows": deleted})
+    finally:
+        wb.close()
+
+
+@app.route("/api/starts-clear-file", methods=["POST"])
+def api_starts_clear_file():
+    data = request.get_json(force=True, silent=True) or {}
+    file_name = str(data.get("file") or "").strip()
+    try:
+        fp = _safe_start_file_path(file_name)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not os.path.isfile(fp):
+        return jsonify({"ok": False, "error": "File not found", "file": file_name}), 404
+
+    wb = openpyxl.load_workbook(fp)
+    try:
+        sh = wb.active
+        max_row = int(sh.max_row or 1)
+        max_col = int(sh.max_column or 1)
+        cleared = 0
+        if max_row >= 2:
+            for r in range(2, max_row + 1):
+                for c in range(1, max_col + 1):
+                    sh.cell(row=r, column=c, value=None)
+                cleared += 1
+        wb.save(fp)
+        return jsonify({"ok": True, "file": file_name, "cleared_rows": int(cleared)})
+    finally:
+        wb.close()
+
+
+@app.route("/api/recipes-files")
+def api_recipes_files():
+    items = []
+    for u in flat_run_units():
+        label = str(u.get("label", "") or "").strip()
+        if not label:
+            continue
+        out_dir = all_out_name_for_label(label)
+        file_path = _project_excel_path_by_out_dir(out_dir)
+        exists = os.path.isfile(file_path)
+        row_count = 0
+        title_count = 0
+        if exists:
+            try:
+                wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+                try:
+                    sh = wb.active
+                    max_row = int(sh.max_row or 0)
+                    max_col = int(sh.max_column or 0)
+                    row_count = max(0, max_row - 1)
+                    title_col = 1
+                    for c in range(1, max_col + 1):
+                        hv = sh.cell(row=1, column=c).value
+                        if hv is not None and str(hv).strip().lower() == "title":
+                            title_col = c
+                            break
+                    for r in range(2, max_row + 1):
+                        if _is_filled_excel_value(sh.cell(row=r, column=title_col).value):
+                            title_count += 1
+                finally:
+                    wb.close()
+            except Exception:
+                pass
+        items.append(
+            {
+                "project": label,
+                "out_dir": out_dir,
+                "file_path": file_path,
+                "exists": bool(exists),
+                "row_count": int(row_count),
+                "title_count": int(title_count),
+            }
+        )
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/recipes-read")
+def api_recipes_read():
+    project = (request.args.get("project") or "").strip()
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"ok": False, "error": "Unknown project"}), 404
+    out_dir = all_out_name_for_label(project)
+    file_path = _project_excel_path_by_out_dir(out_dir)
+    if not os.path.isfile(file_path):
+        return jsonify({"ok": False, "error": "Recipes file not found", "project": project}), 404
+
+    limit = int(request.args.get("limit", 200) or 200)
+    offset = int(request.args.get("offset", 0) or 0)
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
+
+    wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 0)
+        max_row = int(sh.max_row or 0)
+        raw_headers = []
+        if max_col > 0:
+            for c in range(1, max_col + 1):
+                hv = sh.cell(row=1, column=c).value
+                h = str(hv).strip() if hv is not None else f"Column_{c}"
+                raw_headers.append(h or f"Column_{c}")
+        headers = _unique_headers(raw_headers)
+
+        rows = []
+        start_excel_row = 2 + offset
+        end_excel_row = min(max_row, start_excel_row + limit - 1)
+        if max_col > 0 and max_row >= 2 and start_excel_row <= end_excel_row:
+            for r in range(start_excel_row, end_excel_row + 1):
+                row_obj = {"excel_row": int(r)}
+                for c in range(1, max_col + 1):
+                    row_obj[headers[c - 1]] = sh.cell(row=r, column=c).value
+                rows.append(row_obj)
+        return jsonify(
+            {
+                "ok": True,
+                "project": project,
+                "file_path": file_path,
+                "headers": headers,
+                "rows": rows,
+                "total_rows": max(0, max_row - 1),
+                "offset": offset,
+                "limit": limit,
+            }
+        )
+    finally:
+        wb.close()
+
+
+@app.route("/api/recipes-update-row", methods=["POST"])
+def api_recipes_update_row():
+    data = request.get_json(force=True, silent=True) or {}
+    project = str(data.get("project") or "").strip()
+    excel_row = int(data.get("excel_row", 0) or 0)
+    values = data.get("values")
+    values_by_col = data.get("values_by_col")
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"ok": False, "error": "Unknown project"}), 404
+    if excel_row < 2:
+        return jsonify({"ok": False, "error": "excel_row must be >= 2"}), 400
+    if (not isinstance(values, dict) or not values) and (not isinstance(values_by_col, dict) or not values_by_col):
+        return jsonify({"ok": False, "error": "values or values_by_col is required"}), 400
+
+    out_dir = all_out_name_for_label(project)
+    file_path = _project_excel_path_by_out_dir(out_dir)
+    if not os.path.isfile(file_path):
+        return jsonify({"ok": False, "error": "Recipes file not found", "project": project}), 404
+
+    wb = openpyxl.load_workbook(file_path)
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 1)
+        header_to_col = {}
+        for c in range(1, max_col + 1):
+            hv = sh.cell(row=1, column=c).value
+            if hv is None:
+                continue
+            header_to_col[str(hv).strip().lower()] = c
+
+        def ensure_col(name: str) -> int:
+            nonlocal max_col
+            lk = str(name or "").strip().lower()
+            if not lk:
+                raise ValueError("Invalid column name")
+            c0 = header_to_col.get(lk)
+            if c0:
+                return c0
+            max_col = max(max_col, int(sh.max_column or 1)) + 1
+            sh.cell(row=1, column=max_col, value=str(name).strip())
+            header_to_col[lk] = max_col
+            return max_col
+
+        if isinstance(values_by_col, dict) and values_by_col:
+            for k, v in values_by_col.items():
+                try:
+                    col = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if col < 1:
+                    continue
+                sh.cell(row=excel_row, column=col, value=v)
+        if isinstance(values, dict) and values:
+            for k, v in values.items():
+                col = ensure_col(str(k))
+                sh.cell(row=excel_row, column=col, value=v)
+        wb.save(file_path)
+        return jsonify({"ok": True, "project": project, "excel_row": excel_row})
+    finally:
+        wb.close()
+
+
+@app.route("/api/recipes-delete-rows", methods=["POST"])
+def api_recipes_delete_rows():
+    data = request.get_json(force=True, silent=True) or {}
+    project = str(data.get("project") or "").strip()
+    rows = data.get("excel_rows")
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"ok": False, "error": "Unknown project"}), 404
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"ok": False, "error": "excel_rows list is required"}), 400
+
+    out_dir = all_out_name_for_label(project)
+    file_path = _project_excel_path_by_out_dir(out_dir)
+    if not os.path.isfile(file_path):
+        return jsonify({"ok": False, "error": "Recipes file not found", "project": project}), 404
+
+    to_delete = []
+    for r in rows:
+        try:
+            rr = int(r)
+        except (TypeError, ValueError):
+            continue
+        if rr >= 2:
+            to_delete.append(rr)
+    to_delete = sorted(set(to_delete), reverse=True)
+    if not to_delete:
+        return jsonify({"ok": False, "error": "No valid excel rows to delete"}), 400
+
+    wb = openpyxl.load_workbook(file_path)
+    try:
+        sh = wb.active
+        deleted = 0
+        max_row = int(sh.max_row or 1)
+        for rr in to_delete:
+            if 2 <= rr <= max_row:
+                sh.delete_rows(rr, 1)
+                deleted += 1
+        wb.save(file_path)
+        return jsonify({"ok": True, "project": project, "deleted_rows": deleted})
+    finally:
+        wb.close()
+
+
+@app.route("/api/recipes-clear-file", methods=["POST"])
+def api_recipes_clear_file():
+    data = request.get_json(force=True, silent=True) or {}
+    project = str(data.get("project") or "").strip()
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"ok": False, "error": "Unknown project"}), 404
+
+    out_dir = all_out_name_for_label(project)
+    file_path = _project_excel_path_by_out_dir(out_dir)
+    if not os.path.isfile(file_path):
+        return jsonify({"ok": False, "error": "Recipes file not found", "project": project}), 404
+
+    wb = openpyxl.load_workbook(file_path)
+    try:
+        sh = wb.active
+        max_row = int(sh.max_row or 1)
+        max_col = int(sh.max_column or 1)
+        cleared = 0
+        if max_row >= 2:
+            for r in range(2, max_row + 1):
+                for c in range(1, max_col + 1):
+                    sh.cell(row=r, column=c, value=None)
+                cleared += 1
+        wb.save(file_path)
+        return jsonify({"ok": True, "project": project, "cleared_rows": int(cleared)})
+    finally:
+        wb.close()
+
+
 def _normalize_script_jobs(script_names) -> list:
     """
     (folder, script) | (folder, script, env) | 4- or 5-tuple
@@ -631,6 +1519,252 @@ def jobs_for_start1_all_except_s2() -> list:
             (u["folder"], "A.1-START.py", u.get("env") or {}, u["log_id"], u["label"])
         )
     return o
+
+
+def _read_titles_from_start_workbook(path: str) -> list:
+    titles: list = []
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception:
+        return titles
+    try:
+        sh = wb.active
+        title_col = 1
+        used_col = 0
+        max_col = max(1, int(sh.max_column or 1))
+        for c in range(1, max_col + 1):
+            hv = sh.cell(row=1, column=c).value
+            if hv is None:
+                continue
+            hk = str(hv).strip().lower()
+            if hk == "title":
+                title_col = c
+                break
+        for c in range(1, max_col + 1):
+            hv = sh.cell(row=1, column=c).value
+            if hv is None:
+                continue
+            if str(hv).strip().lower() == "used":
+                used_col = c
+                break
+
+        def _is_used_true(v) -> bool:
+            if v is None:
+                return False
+            if isinstance(v, bool):
+                return v is True
+            if isinstance(v, (int, float)):
+                return int(v) == 1
+            s = str(v).strip().lower()
+            if not s:
+                return False
+            return s in {"1", "true", "yes", "y", "used"}
+
+        max_row = int(sh.max_row or 1)
+        for r in range(2, max_row + 1):
+            if used_col > 0 and _is_used_true(sh.cell(row=r, column=used_col).value):
+                continue
+            v = sh.cell(row=r, column=title_col).value
+            if v is None:
+                continue
+            t = str(v).strip()
+            if t:
+                titles.append({"title": t, "source_row": r})
+    finally:
+        wb.close()
+    return titles
+
+
+def _write_start_usage_columns(starts_dir: str, xlsx_files: list, used_map: dict, stamp: str) -> None:
+    """
+    Update each STARTS workbook with run usage metadata:
+    - used: 1 for assigned, 0 otherwise
+    - used_at: timestamp for assigned rows
+    - used_project: project label for assigned rows
+    """
+    for fn in xlsx_files:
+        fp = os.path.join(starts_dir, fn)
+        try:
+            wb = openpyxl.load_workbook(fp)
+        except Exception:
+            continue
+        try:
+            sh = wb.active
+            max_col = max(1, int(sh.max_column or 1))
+            max_row = int(sh.max_row or 1)
+
+            header_to_col = {}
+            for c in range(1, max_col + 1):
+                hv = sh.cell(row=1, column=c).value
+                if hv is None:
+                    continue
+                header_to_col[str(hv).strip().lower()] = c
+
+            def ensure_col(name: str) -> int:
+                lk = name.strip().lower()
+                c0 = header_to_col.get(lk)
+                if c0:
+                    return c0
+                new_c = int(sh.max_column or 1) + 1
+                sh.cell(row=1, column=new_c, value=name)
+                header_to_col[lk] = new_c
+                return new_c
+
+            used_col = ensure_col("used")
+            used_at_col = ensure_col("used_at")
+            used_project_col = ensure_col("used_project")
+
+            by_row = used_map.get(fn, {})
+            for r in range(2, max_row + 1):
+                rec = by_row.get(r)
+                if rec:
+                    sh.cell(row=r, column=used_col, value=1)
+                    sh.cell(row=r, column=used_at_col, value=stamp)
+                    sh.cell(row=r, column=used_project_col, value=rec.get("project", ""))
+                else:
+                    sh.cell(row=r, column=used_col, value=0)
+                    sh.cell(row=r, column=used_at_col, value="")
+                    sh.cell(row=r, column=used_project_col, value="")
+
+            wb.save(fp)
+        finally:
+            wb.close()
+
+
+def _build_global_start_runtime_jobs(base_jobs: list) -> tuple[list, dict]:
+    """
+    Build temp START files for this click only (no sites.json change):
+    - Reads all titles from STARTS/*.xlsx
+    - Distributes titles evenly over current jobs
+    - Writes per-job runtime .xlsx and passes override through env
+    - Writes one usage report with Used=true/false
+    """
+    jobs = list(base_jobs or [])
+    starts_dir = os.path.join(_APP_ROOT, "STARTS")
+    if not jobs:
+        return jobs, {"mode": "no_jobs", "titles_total": 0}
+    if not os.path.isdir(starts_dir):
+        return jobs, {"mode": "missing_starts_folder", "titles_total": 0}
+
+    xlsx_files = [
+        f
+        for f in os.listdir(starts_dir)
+        if f.lower().endswith(".xlsx")
+        and not f.startswith("~$")
+        and not f.startswith("._")
+        and not f.startswith("_")
+        and os.path.isfile(os.path.join(starts_dir, f))
+    ]
+    xlsx_files.sort(key=_natural_sort_key)
+    if not xlsx_files:
+        return jobs, {"mode": "no_xlsx_files", "titles_total": 0}
+
+    title_rows: list = []
+    for fn in xlsx_files:
+        fp = os.path.join(starts_dir, fn)
+        for rec in _read_titles_from_start_workbook(fp):
+            title_rows.append(
+                {
+                    "title": rec["title"],
+                    "source_file": fn,
+                    "source_row": int(rec.get("source_row", 0) or 0),
+                }
+            )
+
+    if not title_rows:
+        return jobs, {"mode": "no_titles_found", "titles_total": 0}
+
+    n_jobs = len(jobs)
+    chunks = [[] for _ in range(n_jobs)]
+    start_idx = int(_GLOBAL_START_ROTATION.get("cursor", 0) or 0) % max(1, n_jobs)
+    for i, row in enumerate(title_rows):
+        chunks[(start_idx + i) % n_jobs].append(row)
+    _GLOBAL_START_ROTATION["cursor"] = (start_idx + 1) % max(1, n_jobs)
+
+    runtime_root = os.path.join(starts_dir, "_runtime_global_start")
+    os.makedirs(runtime_root, exist_ok=True)
+    for name in os.listdir(runtime_root):
+        p = os.path.join(runtime_root, name)
+        if os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+    patched_jobs = []
+    usage_rows = []
+    per_project_counts = {}
+    for i, job in enumerate(jobs):
+        folder, script, env, log_id, line_label = job
+        rows = chunks[i]
+        wb = openpyxl.Workbook()
+        sh = wb.active
+        sh.title = "Titles"
+        sh.cell(row=1, column=1, value="Title")
+        sh.cell(row=1, column=2, value="source_file")
+        sh.cell(row=1, column=3, value="source_row")
+        for r, item in enumerate(rows, start=2):
+            sh.cell(row=r, column=1, value=item["title"])
+            sh.cell(row=r, column=2, value=item.get("source_file", ""))
+            sh.cell(row=r, column=3, value=int(item.get("source_row", 0) or 0))
+            usage_rows.append(
+                {
+                    "Title": item["title"],
+                    "Source File": item["source_file"],
+                    "Assigned Project": line_label,
+                    "Used": True,
+                }
+            )
+        out_name = f"{i+1:04d}_{_safe_log_dom_id(str(line_label))}.xlsx"
+        out_path = os.path.join(runtime_root, out_name)
+        wb.save(out_path)
+        wb.close()
+        env2 = dict(env or {})
+        env2["PINTEREST_START_FILE_OVERRIDE"] = out_path
+        patched_jobs.append((folder, script, env2, log_id, line_label))
+        per_project_counts[str(line_label)] = len(rows)
+
+    used_titles = set()
+    for c in chunks:
+        for item in c:
+            used_titles.add((item["title"], item["source_file"]))
+    for item in title_rows:
+        k = (item["title"], item["source_file"])
+        if k in used_titles:
+            continue
+        usage_rows.append(
+            {
+                "Title": item["title"],
+                "Source File": item["source_file"],
+                "Assigned Project": "",
+                "Used": False,
+            }
+        )
+
+    usage_path = os.path.join(runtime_root, "_global_usage.xlsx")
+    wb_u = openpyxl.Workbook()
+    sh_u = wb_u.active
+    sh_u.title = "Usage"
+    headers = ["Title", "Source File", "Assigned Project", "Used"]
+    for c, h in enumerate(headers, start=1):
+        sh_u.cell(row=1, column=c, value=h)
+    for r, row in enumerate(usage_rows, start=2):
+        sh_u.cell(row=r, column=1, value=row["Title"])
+        sh_u.cell(row=r, column=2, value=row["Source File"])
+        sh_u.cell(row=r, column=3, value=row["Assigned Project"])
+        sh_u.cell(row=r, column=4, value=row["Used"])
+    wb_u.save(usage_path)
+    wb_u.close()
+
+    return patched_jobs, {
+        "mode": "allocated",
+        "titles_total": len(title_rows),
+        "projects_total": n_jobs,
+        "rotation_start_index": int(start_idx),
+        "runtime_dir": runtime_root,
+        "usage_file": usage_path,
+        "per_project_counts": per_project_counts,
+    }
 
 
 def jobs_for_start2_only() -> list:
@@ -970,8 +2104,16 @@ def generate_log_in_batches(script_names, batch_size=3, env_extra=None):
 
 @app.route("/stream-all-start")
 def stream_all_start():
+    jobs, info = _build_global_start_runtime_jobs(jobs_for_start1_all_except_s2())
+    if info.get("mode") == "allocated":
+        app.logger.info(
+            "Global START allocation: %s titles for %s projects. Usage report: %s",
+            info.get("titles_total"),
+            info.get("projects_total"),
+            info.get("usage_file"),
+        )
     return Response(
-        generate_log_parallel(jobs_for_start1_all_except_s2()), mimetype="text/event-stream"
+        generate_log_parallel(jobs), mimetype="text/event-stream"
     )
 
 
@@ -1418,6 +2560,44 @@ def api_site_editor():
     return jsonify({"ok": True, "message": "config/sites.json updated for this project row."})
 
 
+@app.route("/api/project-stats")
+def api_project_stats():
+    project = (request.args.get("project") or "").strip()
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"ok": False, "error": "Unknown project"}), 404
+    s = _project_column_stats(project)
+    s["project"] = project
+    return jsonify(s)
+
+
+@app.route("/api/projects-stats")
+def api_projects_stats():
+    items = []
+    for u in flat_run_units():
+        label = str(u.get("label", "") or "").strip()
+        log_id = str(u.get("log_id", "") or "").strip()
+        if not label or not log_id:
+            continue
+        s = _project_column_stats(label)
+        s["project"] = label
+        s["log_id"] = log_id
+        items.append(s)
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/project-column-details")
+def api_project_column_details():
+    project = (request.args.get("project") or "").strip()
+    column = (request.args.get("column") or "").strip()
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"ok": False, "error": "Unknown project"}), 404
+    if not column:
+        return jsonify({"ok": False, "error": "Missing column"}), 400
+    d = _project_column_details(project, column)
+    d["project"] = project
+    return jsonify(d)
+
+
 @app.route("/manage_sites", methods=["GET", "POST"])
 def manage_sites():
     if request.method == "POST":
@@ -1517,6 +2697,16 @@ def manage_sites():
         sites_view=sites_view,
         site_count=len(sites_view),
     )
+
+
+@app.route("/manage_starts")
+def manage_starts():
+    return render_template("manage_starts.html")
+
+
+@app.route("/manage_recipes")
+def manage_recipes():
+    return render_template("manage_recipes.html")
 
 
 # -------------------- WP UPLOAD (pool 10 ب 10) --------------------
@@ -1821,7 +3011,7 @@ def upload_titles():
 @app.route("/clear_failed", methods=["POST"])
 def clear_failed():
     """
-    كيمسح أي صف فـ images.xlsx إذا:
+    كيمسح أي صف فـ Recipes.xlsx (أو images.xlsx القديم) إذا:
       - 'statu' = FAILED أو خاوي
       - أو 'statu_ing' = FAILED أو خاوي
     إذا كاين غير واحد فيهم، خدام. إذا جوج ما كاينينش كيرجع رسالة مناسبة.
@@ -1829,7 +3019,7 @@ def clear_failed():
     results = {}
     for project in flat_ui_labels():
         out_folder = all_out_name_for_label(project)
-        file_path = os.path.join(os.getcwd(), "ALL", out_folder, "images.xlsx")
+        file_path = _project_excel_path_by_out_dir(out_folder)
 
         if not os.path.exists(file_path):
             results[project] = "File not found"
@@ -1951,16 +3141,14 @@ def manage_images():
     """
 
     for project in flat_ui_labels():
-        file_path = os.path.join(
-            os.getcwd(), "ALL", all_out_name_for_label(project), "images.xlsx"
-        )
+        file_path = _project_excel_path_by_out_dir(all_out_name_for_label(project))
         if not os.path.exists(file_path):
             html += f"""
             <div class="col">
               <div class="card h-100 mb-4">
                 <div class="card-body">
                   <h4 class="card-title">{project}</h4>
-                  <p class="card-text text-danger">images.xlsx not found.</p>
+                  <p class="card-text text-danger">Recipes.xlsx not found.</p>
                 </div>
               </div>
             </div>
@@ -2287,11 +3475,9 @@ def delete_image_row():
     except:
         return "<h1>Invalid row_number</h1><a href='/manage_images'>Back</a>"
 
-    file_path = os.path.join(
-        os.getcwd(), "ALL", all_out_name_for_label(project), "images.xlsx"
-    )
+    file_path = _project_excel_path_by_out_dir(all_out_name_for_label(project))
     if not os.path.exists(file_path):
-        return f"<h1>images.xlsx not found for {project}</h1><a href='/manage_images'>Back</a>"
+        return f"<h1>Recipes.xlsx not found for {project}</h1><a href='/manage_images'>Back</a>"
 
     wb = openpyxl.load_workbook(file_path)
     sheet = wb.active
@@ -2299,7 +3485,7 @@ def delete_image_row():
     if 2 <= row_number <= sheet.max_row:
         sheet.delete_rows(row_number, 1)
         wb.save(file_path)
-        return f"<h1>Row {row_number} deleted from {project}'s images.xlsx</h1>"
+        return f"<h1>Row {row_number} deleted from {project}'s Recipes.xlsx</h1>"
     else:
         return f"<h1>Row {row_number} out of range</h1>"
 
@@ -2315,7 +3501,10 @@ def index():
         num_xlsx = 0
 
     _units = flat_run_units()
-    project_folders_json = json.dumps([u["log_id"] for u in _units])
+    project_folders_json = _json_for_inline_script([u["log_id"] for u in _units])
+    project_units_json = _json_for_inline_script(
+        [{"log_id": u["log_id"], "label": u["label"]} for u in _units]
+    )
 
     log_boxes = ""
     for u in _units:
@@ -2326,8 +3515,11 @@ def index():
         log_boxes += f"""
           <div class="col-lg-6 mb-4">
             <div class="card h-100">
-              <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-1">
-                <h6 class="mb-0 text-secondary">{title} Log</h6>
+              <div class="card-header d-flex justify-content-between align-items-start flex-wrap gap-1">
+                <div class="me-2 flex-grow-1">
+                  <h6 class="mb-0 text-secondary">{title} Log</h6>
+                  <div id="stats_{lid}" class="small text-muted project-stats-line">Loading stats...</div>
+                </div>
                 <button type="button" class="btn btn-sm btn-outline-info" title="Edit this project in sites.json (tabbed: WordPress, API, Start, a2, pipeline, …)" onclick='showSiteConfigInfo({titlej})'>Info</button>
               </div>
               <div class="card-body overflow-auto" style="height:200px;" id="log_{lid}"></div>
@@ -2341,6 +3533,7 @@ def index():
                 <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_image", this)'>PIN IMAGE</button>
                 <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
                 <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
+                <button class="btn btn-sm btn-outline-danger" onclick='clearProjectLog({lidj})'>CLEAR LOG</button>
               </div>
             </div>
           </div>
@@ -2455,11 +3648,102 @@ def index():
         #siteConfigModal .site-editor-top-tabs {{ border-bottom: 0; flex-wrap: nowrap; }}
         #siteConfigModal .site-editor-form-tab-content {{ min-height: 12rem; }}
         #siteConfigModal #siteEditorFormPane label {{ font-size: 0.8rem; margin-bottom: 0.1rem; }}
+        .project-stats-line {{
+          max-width: 100%;
+          margin-top: 2px;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          line-height: 1.25;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          align-items: center;
+        }}
+        .stat-chip {{
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 600;
+          border: 1px solid transparent;
+        }}
+        .stat-chip i {{ font-size: 14px; line-height: 1; }}
+        .stat-chip-good {{
+          background: #28c76f;
+          color: #fff;
+        }}
+        .stat-chip-bad {{
+          background: #ea5455;
+          color: #fff;
+        }}
+        .stat-chip-neutral {{
+          background: #f1f3f5;
+          color: #5c6670;
+          border-color: #d6dbe1;
+        }}
+        .stat-chip-name {{
+          max-width: 180px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }}
+        .stat-chip-open {{ color: inherit !important; }}
+        .stat-chip-open:hover {{ opacity: 0.85; }}
       </style>
       <script>
         var source = null;
         var projectFolders = {project_folders_json};
+        var projectUnits = {project_units_json};
         var numXlsx = {num_xlsx};
+        var _projectLogHistory = {{}};
+
+        function _logStorageKey(logId) {{
+          return "pinterest_log_" + String(logId || "");
+        }}
+
+        function _persistLog(logId) {{
+          try {{
+            localStorage.setItem(_logStorageKey(logId), _projectLogHistory[logId] || "");
+          }} catch (e) {{}}
+        }}
+
+        function _appendProjectLog(logId, line, isFinished) {{
+          if (!logId) return;
+          var htmlLine = isFinished
+            ? "<span style='color: green;'>" + String(line || "") + "</span><br>"
+            : String(line || "") + "<br>";
+          _projectLogHistory[logId] = String(_projectLogHistory[logId] || "") + htmlLine;
+          var logDiv = document.getElementById("log_" + logId);
+          if (logDiv) {{
+            logDiv.innerHTML = _projectLogHistory[logId];
+            logDiv.scrollTop = logDiv.scrollHeight;
+          }}
+          _persistLog(logId);
+        }}
+
+        function clearProjectLog(logId) {{
+          if (!logId) return;
+          _projectLogHistory[logId] = "";
+          var logDiv = document.getElementById("log_" + logId);
+          if (logDiv) logDiv.innerHTML = "";
+          try {{ localStorage.removeItem(_logStorageKey(logId)); }} catch (e) {{}}
+        }}
+
+        function _restoreProjectLogsFromStorage() {{
+          (projectFolders || []).forEach(function(logId) {{
+            var v = "";
+            try {{ v = localStorage.getItem(_logStorageKey(logId)) || ""; }} catch (e) {{ v = ""; }}
+            _projectLogHistory[logId] = v;
+            var logDiv = document.getElementById("log_" + logId);
+            if (logDiv && v) {{
+              logDiv.innerHTML = v;
+              logDiv.scrollTop = logDiv.scrollHeight;
+            }}
+          }});
+        }}
 
         function disableActionButtons() {{
           var buttons = document.querySelectorAll(".number-button");
@@ -2471,13 +3755,195 @@ def index():
           buttons.forEach(function(btn) {{ btn.disabled = false; }});
         }}
 
+        function _escapeHtml(s) {{
+          return String(s == null ? "" : s)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;");
+        }}
+
+        function showColumnDetails(projectLabel, columnName) {{
+          var modalEl = document.getElementById("columnDetailsModal");
+          var titleEl = document.getElementById("columnDetailsTitle");
+          var bodyEl = document.getElementById("columnDetailsBody");
+          if (!modalEl || !titleEl || !bodyEl) return;
+          titleEl.textContent = projectLabel + " — " + columnName;
+          bodyEl.innerHTML = "<div class='text-muted'>Loading...</div>";
+          if (typeof bootstrap !== "undefined") {{
+            new bootstrap.Modal(modalEl).show();
+          }}
+          fetch("/api/project-column-details?project=" + encodeURIComponent(projectLabel) + "&column=" + encodeURIComponent(columnName))
+            .then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status)); return j; }}); }})
+            .then(function(data) {{
+              if (!data || !data.ok) {{
+                bodyEl.innerHTML = "<div class='alert alert-danger py-2 mb-0'>Could not load details.</div>";
+                return;
+              }}
+              var rows = Array.isArray(data.rows) ? data.rows : [];
+              if (!rows.length) {{
+                bodyEl.innerHTML = "<div class='alert alert-warning py-2 mb-0'>No rows found.</div>";
+                return;
+              }}
+              var html = "";
+              if (!data.column_exists) {{
+                html += "<div class='alert alert-warning py-2'>Column does not exist yet in sheet. Showing Title list with empty values.</div>";
+              }}
+              html += "<div class='table-responsive'><table class='table table-sm table-striped align-middle mb-0'>";
+              html += "<thead><tr><th style='width:70px'>#</th><th>Title</th><th style='width:140px'>Status</th><th>Result</th></tr></thead><tbody>";
+              rows.forEach(function(r) {{
+                var badge = r.filled
+                  ? "<span class='badge bg-success'>Done</span>"
+                  : "<span class='badge bg-danger'>Missing</span>";
+                html += "<tr>"
+                  + "<td>" + _escapeHtml(String(r.row || "")) + "</td>"
+                  + "<td>" + _escapeHtml(String(r.title || "")) + "</td>"
+                  + "<td>" + badge + "</td>"
+                  + "<td>" + _escapeHtml(String(r.value || "")) + "</td>"
+                  + "</tr>";
+              }});
+              html += "</tbody></table></div>";
+              bodyEl.innerHTML = html;
+            }})
+            .catch(function(e) {{
+              bodyEl.innerHTML = "<div class='alert alert-danger py-2 mb-0'>Error: " + _escapeHtml(e && e.message ? e.message : e) + "</div>";
+            }});
+        }}
+
+        function showColumnDetailsByEncoded(projectEnc, columnEnc) {{
+          var p = decodeURIComponent(String(projectEnc || ""));
+          var c = decodeURIComponent(String(columnEnc || ""));
+          showColumnDetails(p, c);
+        }}
+
+        function refreshProjectStats(logId, projectLabel) {{
+          var el = document.getElementById("stats_" + logId);
+          if (!el) return;
+          function renderCols(cols) {{
+            if (!Array.isArray(cols) || !cols.length) {{
+              el.textContent = "No columns";
+              return;
+            }}
+            var pieces = cols.map(function(c) {{
+              var filled = Number(c.filled || 0);
+              var total = Number(c.total || 0);
+              var name = String(c.name || "");
+              var projEnc = encodeURIComponent(String(projectLabel || ""));
+              var nameEnc = encodeURIComponent(name);
+              var klass = "stat-chip-neutral";
+              var icon = "bx-minus-circle";
+              if (total > 0) {{
+                if (filled >= total) {{
+                  klass = "stat-chip-good";
+                  icon = "bx-check-circle";
+                }} else {{
+                  klass = "stat-chip-bad";
+                  icon = "bx-x-circle";
+                }}
+              }}
+              return ""
+                + "<span class='stat-chip " + klass + "' data-st-pe='" + projEnc + "' data-st-ce='" + nameEnc
+                + "' title='" + _escapeHtml(name + ": " + filled + "/" + total).replace(/'/g, "&#39;") + "'>"
+                + "<i class='bx " + icon + "'></i>"
+                + "<span class='stat-chip-count'>" + _escapeHtml(String(filled) + "/" + String(total)) + "</span>"
+                + "<span class='stat-chip-name'>" + _escapeHtml(name) + "</span>"
+                + "<i class='bx bx-expand-alt stat-chip-open' role='button' tabindex='0' title='Show details'></i>"
+                + "</span>";
+            }});
+            el.innerHTML = pieces.join("");
+          }}
+          fetch("/api/project-stats?project=" + encodeURIComponent(projectLabel))
+            .then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status)); return j; }}); }})
+            .then(function(data) {{
+              if (!data || !data.ok) {{
+                el.textContent = "Stats unavailable";
+                return;
+              }}
+              renderCols(Array.isArray(data.columns) ? data.columns : []);
+            }})
+            .catch(function() {{
+              el.textContent = "Stats unavailable";
+            }});
+        }}
+
+        function refreshAllProjectStats() {{
+          fetch("/api/projects-stats")
+            .then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status)); return j; }}); }})
+            .then(function(data) {{
+              var items = (data && Array.isArray(data.items)) ? data.items : [];
+              if (!items.length) {{
+                (projectUnits || []).forEach(function(u) {{ refreshProjectStats(u.log_id, u.label); }});
+                return;
+              }}
+              var seen = {{}};
+              items.forEach(function(it) {{
+                var lid = String(it.log_id || "");
+                var projectLabel = String(it.project || "");
+                var el = document.getElementById("stats_" + lid);
+                if (!el) return;
+                seen[lid] = true;
+                if (!it.ok) {{
+                  el.textContent = "Stats unavailable";
+                  return;
+                }}
+                var cols = Array.isArray(it.columns) ? it.columns : [];
+                if (!cols.length) {{
+                  el.textContent = "No columns";
+                  return;
+                }}
+                var pieces = cols.map(function(c) {{
+                  var filled = Number(c.filled || 0);
+                  var total = Number(c.total || 0);
+                  var name = String(c.name || "");
+                  var projEnc = encodeURIComponent(String(projectLabel || ""));
+                  var nameEnc = encodeURIComponent(name);
+                  var klass = "stat-chip-neutral";
+                  var icon = "bx-minus-circle";
+                  if (total > 0) {{
+                    if (filled >= total) {{
+                      klass = "stat-chip-good";
+                      icon = "bx-check-circle";
+                    }} else {{
+                      klass = "stat-chip-bad";
+                      icon = "bx-x-circle";
+                    }}
+                  }}
+                  return ""
+                    + "<span class='stat-chip " + klass + "' data-st-pe='" + projEnc + "' data-st-ce='" + nameEnc
+                    + "' title='" + _escapeHtml(name + ": " + filled + "/" + total).replace(/'/g, "&#39;") + "'>"
+                    + "<i class='bx " + icon + "'></i>"
+                    + "<span class='stat-chip-count'>" + _escapeHtml(String(filled) + "/" + String(total)) + "</span>"
+                    + "<span class='stat-chip-name'>" + _escapeHtml(name) + "</span>"
+                    + "<i class='bx bx-expand-alt stat-chip-open' role='button' tabindex='0' title='Show details'></i>"
+                    + "</span>";
+                }});
+                el.innerHTML = pieces.join("");
+              }});
+              (projectUnits || []).forEach(function(u) {{
+                if (!seen[String(u.log_id || "")]) refreshProjectStats(u.log_id, u.label);
+              }});
+            }})
+            .catch(function() {{
+              (projectUnits || []).forEach(function(u) {{
+                refreshProjectStats(u.log_id, u.label);
+              }});
+            }});
+        }}
+
+        document.addEventListener("click", function(ev) {{
+          var opener = ev.target.closest(".stat-chip-open");
+          if (!opener) return;
+          var chip = opener.closest(".stat-chip");
+          if (!chip) return;
+          var pe = chip.getAttribute("data-st-pe");
+          var ce = chip.getAttribute("data-st-ce");
+          if (pe !== null && ce !== null && String(pe).length) {{
+            showColumnDetailsByEncoded(pe, ce);
+          }}
+        }});
+
         function startLog(endpoint, btn) {{
           if(source !== null) {{ return; }}
           disableActionButtons();
-          projectFolders.forEach(function(folder) {{
-            let div = document.getElementById("log_" + folder);
-            if(div) div.innerHTML = "";
-          }});
 
           source = new EventSource(endpoint);
           source.onmessage = function(e) {{
@@ -2485,14 +3951,12 @@ def index():
               let data = JSON.parse(e.data);
               let folder = data.folder;
               let line = data.line;
-              let logDiv = document.getElementById("log_" + folder);
-              if(logDiv) {{
+              if (folder && folder !== "all") {{
+                _appendProjectLog(folder, line, line.includes("Finished"));
                 if(line.includes("Finished")) {{
-                  logDiv.innerHTML += "<span style='color: green;'>" + line + "</span><br>";
-                }} else {{
-                  logDiv.innerHTML += line + "<br>";
+                  var pu = (projectUnits || []).find(function(x) {{ return x.log_id === folder; }});
+                  if (pu) refreshProjectStats(pu.log_id, pu.label);
                 }}
-                logDiv.scrollTop = logDiv.scrollHeight;
               }}
     if (
       folder === "all" &&
@@ -2665,14 +4129,8 @@ def index():
               let data = JSON.parse(e.data);
               let logDiv = document.getElementById("log_" + data.folder);
               if (!logDiv) logDiv = document.getElementById("log_" + logId);
-              if(logDiv) {{
-                if(data.line.includes("Finished")) {{
-                  logDiv.innerHTML += "<span style='color: green;'>" + data.line + "</span><br>";
-                }} else {{
-                  logDiv.innerHTML += data.line + "<br>";
-                }}
-                logDiv.scrollTop = logDiv.scrollHeight;
-              }}
+              var targetLogId = data.folder || logId;
+              _appendProjectLog(targetLogId, data.line, data.line.includes("Finished"));
               if(data.line.includes("Finished")) {{
                 source.close();
                 delete projectStreams[logId];
@@ -2689,6 +4147,9 @@ def index():
             buttons.forEach(function(b) {{ b.disabled = false; }});
           }};
         }}
+        document.addEventListener("DOMContentLoaded", function() {{
+          _restoreProjectLogsFromStorage();
+        }});
 
         var _siteEditorProject = "";
         var _siteEditorBase = null;
@@ -3183,6 +4644,7 @@ def index():
             .catch(function(e) {{ alert("Save failed: " + e); }});
         }}
         document.addEventListener("DOMContentLoaded", function() {{
+          refreshAllProjectStats();
           var fp = document.getElementById("siteEditorFormPane");
           if (fp) fp.addEventListener("input", function() {{ _siteEditorRawDirty = false; }}, true);
           var taR = document.getElementById("siteEditorRaw");
@@ -3199,6 +4661,8 @@ def index():
         <ul>
           <li><a href="/"><i class='bx bx-home-alt'></i> Dashboard</a></li>
           <li><a href="/manage_sites"><i class='bx bx-list-ul'></i> Projects (sites)</a></li>
+          <li><a href="/manage_starts"><i class='bx bx-table'></i> Manage STARTS</a></li>
+          <li><a href="/manage_recipes"><i class='bx bx-food-menu'></i> Manage Recipes</a></li>
           <li><a href="/manage_images"><i class='bx bx-image'></i> Manage Images</a></li>
           <li><a href="/manage_articles"><i class='bx bx-file'></i> Manage Articles</a></li>
         </ul>
@@ -3450,6 +4914,23 @@ def index():
               <div class="modal-footer">
                 <button type="button" class="btn btn-primary" id="siteEditorSaveBtn" onclick="siteEditorSave()" disabled>Save to <code>config/sites.json</code></button>
                 <a href="/manage_sites" class="btn btn-outline-secondary" target="_blank" rel="noopener">Full projects form</a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal fade" id="columnDetailsModal" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="columnDetailsTitle">Column Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body" id="columnDetailsBody">
+                <div class="text-muted">Loading...</div>
+              </div>
+              <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
               </div>
             </div>

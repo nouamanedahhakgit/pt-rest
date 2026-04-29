@@ -121,7 +121,7 @@ PINTEREST_BOARDS = list(
 )
 
 # ==== المسارات (مطابقة للكود 1 فقط) ====
-INPUT_FILE = a1_config.all_output_join("images.xlsx")
+INPUT_FILE = a1_config.all_output_join("Recipes.xlsx")
 OUTPUT_DIRECTORY = a1_config.all_output_dir()
 OUTPUT_FILE = 'Pin_01.xlsx'
 

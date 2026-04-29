@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -324,6 +325,13 @@ def resolve_start_titles_excel() -> str:
     """
     Titles for A.1-START: STARTS/{start_file} if set, else STARTS/{site_id}.xlsx, else STARTS/START1.xlsx
     """
+    override = (os.environ.get("PINTEREST_START_FILE_OVERRIDE") or "").strip()
+    if override:
+        p = Path(override)
+        if not p.is_absolute():
+            p = (REPO_ROOT / override).resolve()
+        if p.is_file():
+            return str(p)
     site = get_active_site()
     d = REPO_ROOT / "STARTS"
     sid = str(site.get("id", "default"))
@@ -336,6 +344,131 @@ def resolve_start_titles_excel() -> str:
         if c.is_file():
             return str(c)
     return str(d / f"{sid}.xlsx")
+
+
+def _source_start_should_sync_usage(source_path: str) -> bool:
+    """Updates START*.xlsx in STARTS/, not allocator temp sheets."""
+    try:
+        p = Path(source_path).resolve()
+        sd = (REPO_ROOT / "STARTS").resolve()
+        p.relative_to(sd)
+        if "_runtime_global_start" in p.parts:
+            return False
+        return p.suffix.lower() == ".xlsx"
+    except (ValueError, OSError):
+        return False
+
+
+def apply_usage_to_start_workbook(
+    source_path: str, row_used_success: Optional[Dict[int, bool]] = None
+) -> None:
+    """
+    Writes per-row columns on SOURCE STARTS workbook (pandas row index i ⇒ Excel sheet row == i + 2).
+
+    Columns: used (1/0), used_at ("YYYY-mm-dd HH:MM:SS"), used_project.
+
+    Args:
+      row_used_success: map Excel row index (≥2) → True if Recipe non‑empty after A.1-START run.
+      If omitted or empty, returns without doing IO.
+    """
+    if not source_path or not row_used_success:
+        return
+    if not _source_start_should_sync_usage(source_path):
+        return
+    fp = Path(source_path).resolve()
+    if not fp.is_file():
+        return
+
+    site = get_active_site()
+    sid = str(site.get("id", "") or "").strip()
+    label = (
+        str(site.get("display_name", "") or "").strip()
+        or sid
+        or "default"
+    )
+    proj_label = label
+
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        raise RuntimeError("openpyxl is required for STARTS usage tracking") from None
+
+    wb = load_workbook(fp)
+
+    try:
+        sh = wb.active
+        max_row = max(2, int(sh.max_row or 2))
+        scan_hi = max(int(sh.max_column or 1), 16)
+        header_to_col: Dict[str, int] = {}
+        for c in range(1, scan_hi + 1):
+            hv = sh.cell(row=1, column=c).value
+            if hv is None:
+                continue
+            header_to_col[str(hv).strip().lower()] = c
+
+        title_col = header_to_col.get("title")
+        if title_col is None:
+            for c in range(1, scan_hi + 1):
+                hv = sh.cell(row=1, column=c).value
+                if hv is not None and str(hv).strip().lower() == "title":
+                    title_col = c
+                    header_to_col["title"] = c
+                    break
+        if title_col is None:
+            title_col = 1
+
+        def _hdr(c: int) -> str:
+            v = sh.cell(row=1, column=c).value
+            if v is None:
+                return ""
+            return str(v).strip()
+
+        def ensure_col(name: str) -> int:
+            lk = name.strip().lower()
+            c0 = header_to_col.get(lk)
+            if c0:
+                return c0
+            new_c = int(sh.max_column or 1) + 1
+            sh.cell(row=1, column=new_c, value=name)
+            header_to_col[lk] = new_c
+            return new_c
+
+        def prefer_after_title(name: str, offset: int) -> int:
+            """Always prefer Title+offset for usage metadata columns."""
+            lk = name.strip().lower()
+            c = title_col + offset
+            h = _hdr(c).lower()
+            if h == "" or h == lk:
+                sh.cell(row=1, column=c, value=name)
+                header_to_col[lk] = c
+                return c
+            c0 = header_to_col.get(lk)
+            if c0:
+                return c0
+            return ensure_col(name)
+
+        used_col = prefer_after_title("used", 1)
+        used_at_col = prefer_after_title("used_at", 2)
+        used_project_col = prefer_after_title("used_project", 3)
+
+        for r in range(2, max_row + 1):
+            ok = row_used_success.get(r)
+            if ok is None:
+                continue
+            if ok:
+                sh.cell(row=r, column=used_col, value=1)
+                sh.cell(row=r, column=used_at_col, value=stamp)
+                sh.cell(row=r, column=used_project_col, value=proj_label)
+            else:
+                sh.cell(row=r, column=used_col, value=0)
+                sh.cell(row=r, column=used_at_col, value="")
+                sh.cell(row=r, column=used_project_col, value="")
+
+        wb.save(str(fp))
+    finally:
+        wb.close()
 
 
 def _mask_secret(value: str, *, head: int = 4, tail: int = 4) -> str:
