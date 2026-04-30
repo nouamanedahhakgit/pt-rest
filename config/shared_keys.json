@@ -1,6 +1,5 @@
 {
-  "openai_api_key": "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", 
-  
+  "openai_api_key": "sk-proj--", 
   "openai_model": "gpt-4o-mini",
   "useapi_token": "user:2135-mcrjFuOCYOTTX3YGtx4Gm",
   "useapi_midjourney_channel": "1441888792192618647",
