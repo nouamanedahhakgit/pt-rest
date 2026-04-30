@@ -159,8 +159,56 @@ def process_titles_to_recipes(input_file_path: str, output_file_path: str):
             return ""
         return s
 
+    def _is_used_true(v) -> bool:
+        if pd.isna(v):
+            return False
+        if isinstance(v, bool):
+            return bool(v)
+        try:
+            if isinstance(v, (int, float)):
+                return int(v) == 1
+        except Exception:
+            pass
+        s = str(v).strip().lower()
+        return s in {"1", "true", "yes", "y", "used"}
+
     title_mask = df["Title"].apply(lambda v: bool(_norm_title(v)))
-    title_positions = [int(i) for i, ok in title_mask.items() if bool(ok)]
+    used_mask = (
+        df["used"].apply(_is_used_true)
+        if "used" in df.columns
+        else pd.Series([False] * len(df), index=df.index)
+    )
+    title_positions = [int(i) for i in df.index if bool(title_mask.loc[i]) and not bool(used_mask.loc[i])]
+    raw_limit = str(os.getenv("PINTEREST_START_LIMIT", "") or "").strip()
+    title_limit = 0
+    if raw_limit:
+        try:
+            title_limit = max(0, int(raw_limit))
+        except ValueError:
+            title_limit = 0
+    if title_limit > 0:
+        title_positions = title_positions[:title_limit]
+    if os.path.isfile(output_file_path):
+        try:
+            existing_df = pd.read_excel(output_file_path)
+        except Exception:
+            existing_df = pd.DataFrame(columns=["Title", "Recipe", "Generated At"])
+    else:
+        existing_df = pd.DataFrame(columns=["Title", "Recipe", "Generated At"])
+
+    for col in ["Title", "Recipe", "Generated At"]:
+        if col not in existing_df.columns:
+            existing_df[col] = ""
+    existing_df = existing_df[["Title", "Recipe", "Generated At"]].copy()
+    existing_df["Title"] = existing_df["Title"].apply(_norm_title)
+    existing_df = existing_df[existing_df["Title"] != ""].copy()
+    existing_df = existing_df.drop_duplicates(subset=["Title"], keep="last")
+    existing_titles_with_recipe = set(
+        existing_df[
+            existing_df["Recipe"].apply(lambda v: bool(str(v or "").strip()))
+        ]["Title"].tolist()
+    )
+
     total_rows = len(title_positions)
     generated_count = 0
     verified_count = 0
@@ -169,6 +217,7 @@ def process_titles_to_recipes(input_file_path: str, output_file_path: str):
     print(f"[INFO] Total titles: {total_rows}")
 
     row_processed_ok = {}
+    touched_positions = []
     for i in title_positions:
         row = df.iloc[i]
         row_num = i + 1
@@ -178,6 +227,12 @@ def process_titles_to_recipes(input_file_path: str, output_file_path: str):
         row_processed_ok[i] = False
 
         try:
+            if title in existing_titles_with_recipe:
+                # Keep already-generated output unchanged; only mark START row as used.
+                verified_count += 1
+                row_processed_ok[i] = True
+                print(f"[OK] Row {row_num}/{total_rows}: already in Recipes.xlsx -> skipped")
+                continue
             if not existing:
                 df.at[i, "Recipe"] = generate_recipe_from_title(title)
                 df.at[i, "Generated At"] = stamp_now
@@ -198,13 +253,14 @@ def process_titles_to_recipes(input_file_path: str, output_file_path: str):
                 verified_count += 1
                 print(f"[OK] Row {row_num}/{total_rows}: already exists -> verified/repair")
             row_processed_ok[i] = True
+            touched_positions.append(i)
         except Exception as e:
             df.at[i, "Recipe"] = ""
             df.at[i, "Generated At"] = ""
             failed_count += 1
             print(f"[WARN] Row {row_num}/{total_rows}: failed -> {e}")
 
-    run_df = df.loc[title_positions, ["Title", "Recipe", "Generated At"]].copy()
+    run_df = df.loc[touched_positions, ["Title", "Recipe", "Generated At"]].copy()
     run_df["Title"] = run_df["Title"].apply(_norm_title)
     run_df = run_df[run_df["Title"] != ""].copy()
     run_df = run_df.drop_duplicates(subset=["Title"], keep="last")
@@ -212,22 +268,6 @@ def process_titles_to_recipes(input_file_path: str, output_file_path: str):
     out_dir = os.path.dirname(output_file_path)
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
-
-    if os.path.isfile(output_file_path):
-        try:
-            existing_df = pd.read_excel(output_file_path)
-        except Exception:
-            existing_df = pd.DataFrame(columns=["Title", "Recipe", "Generated At"])
-    else:
-        existing_df = pd.DataFrame(columns=["Title", "Recipe", "Generated At"])
-
-    for col in ["Title", "Recipe", "Generated At"]:
-        if col not in existing_df.columns:
-            existing_df[col] = ""
-    existing_df = existing_df[["Title", "Recipe", "Generated At"]].copy()
-    existing_df["Title"] = existing_df["Title"].apply(_norm_title)
-    existing_df = existing_df[existing_df["Title"] != ""].copy()
-    existing_df = existing_df.drop_duplicates(subset=["Title"], keep="last")
 
     out_df = pd.concat([existing_df, run_df], ignore_index=True)
     out_df = out_df.drop_duplicates(subset=["Title"], keep="last")

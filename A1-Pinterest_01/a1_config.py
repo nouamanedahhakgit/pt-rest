@@ -323,7 +323,8 @@ def all_output_join(*parts: str) -> str:
 
 def resolve_start_titles_excel() -> str:
     """
-    Titles for A.1-START: STARTS/{start_file} if set, else STARTS/{site_id}.xlsx, else STARTS/START1.xlsx
+    Per-project START workbook for A.1-START.
+    Default location: ALL/<out_dir>/START.xlsx (or site["start_file"] inside that same folder).
     """
     override = (os.environ.get("PINTEREST_START_FILE_OVERRIDE") or "").strip()
     if override:
@@ -333,25 +334,64 @@ def resolve_start_titles_excel() -> str:
         if p.is_file():
             return str(p)
     site = get_active_site()
-    d = REPO_ROOT / "STARTS"
-    sid = str(site.get("id", "default"))
-    if site.get("start_file"):
-        c = d / str(site["start_file"])
+    out_dir = Path(all_output_dir())
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    start_name = str(site.get("start_file") or "").strip() or "START.xlsx"
+    c = Path(start_name)
+    if c.is_absolute() and c.suffix.lower() == ".xlsx":
         if c.is_file():
             return str(c)
-    for name in (f"{sid}.xlsx", "START1.xlsx"):
-        c = d / name
-        if c.is_file():
-            return str(c)
-    return str(d / f"{sid}.xlsx")
+        c.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import openpyxl
+            wb = openpyxl.Workbook()
+            sh = wb.active
+            sh.title = "Titles"
+            sh.cell(row=1, column=1, value="Title")
+            wb.save(str(c))
+            wb.close()
+        except Exception:
+            pass
+        return str(c)
+
+    target = (out_dir / c.name).resolve()
+    if target.is_file():
+        return str(target)
+
+    try:
+        import openpyxl
+        wb = openpyxl.Workbook()
+        sh = wb.active
+        sh.title = "Titles"
+        sh.cell(row=1, column=1, value="Title")
+        wb.save(str(target))
+        wb.close()
+    except Exception:
+        pass
+    return str(target)
 
 
 def _source_start_should_sync_usage(source_path: str) -> bool:
-    """Updates START*.xlsx in STARTS/, not allocator temp sheets."""
+    """Updates source START workbook usage columns on STARTS/ or ALL/ paths."""
     try:
         p = Path(source_path).resolve()
-        sd = (REPO_ROOT / "STARTS").resolve()
-        p.relative_to(sd)
+        starts_dir = (REPO_ROOT / "STARTS").resolve()
+        all_dir = (REPO_ROOT / "ALL").resolve()
+        in_starts = False
+        in_all = False
+        try:
+            p.relative_to(starts_dir)
+            in_starts = True
+        except (ValueError, OSError):
+            in_starts = False
+        try:
+            p.relative_to(all_dir)
+            in_all = True
+        except (ValueError, OSError):
+            in_all = False
+        if not in_starts and not in_all:
+            return False
         if "_runtime_global_start" in p.parts:
             return False
         return p.suffix.lower() == ".xlsx"

@@ -623,6 +623,33 @@ def _safe_start_file_path(file_name: str) -> str:
     return fp
 
 
+def _project_start_file_path(project_label: str) -> str:
+    """Per-project START workbook path under ALL/<out_dir>/."""
+    if not project_label or not is_allowed_project_label(project_label):
+        raise ValueError("Unknown project")
+    out_dir = all_out_name_for_label(project_label)
+    base = os.path.join(_APP_ROOT, "ALL", out_dir)
+    os.makedirs(base, exist_ok=True)
+
+    start_name = "START.xlsx"
+    if _use_json_sites():
+        d = _load_sites_file_app()
+        sites = d.get("sites") if isinstance(d, dict) else None
+        if isinstance(sites, list):
+            for s in sites:
+                if not isinstance(s, dict):
+                    continue
+                title = _site_row_public_title(s)
+                sid = str(s.get("id", "") or "").strip()
+                lid = str(s.get("log_id", "") or "").strip()
+                if project_label in {title, sid, lid}:
+                    nm = str(s.get("start_file", "") or "").strip()
+                    if nm:
+                        start_name = os.path.basename(nm) or "START.xlsx"
+                    break
+    return os.path.join(base, start_name)
+
+
 def _unique_headers(header_values: list) -> list:
     """
     Make duplicate Excel headers unique for JSON/table rendering.
@@ -646,6 +673,54 @@ def _unique_headers(header_values: list) -> list:
 
 @app.route("/api/starts-files")
 def api_starts_files():
+    mode = (request.args.get("mode") or "projects").strip().lower()
+    if mode != "legacy":
+        items = []
+        for u in flat_run_units():
+            project = str(u.get("label", "") or "").strip()
+            if not project:
+                continue
+            try:
+                fp = _project_start_file_path(project)
+            except ValueError:
+                continue
+            exists = os.path.isfile(fp)
+            row_count = 0
+            title_count = 0
+            if exists:
+                try:
+                    wb = openpyxl.load_workbook(fp, data_only=True, read_only=True)
+                    try:
+                        sh = wb.active
+                        max_row = int(sh.max_row or 0)
+                        row_count = max(0, max_row - 1)
+                        max_col = int(sh.max_column or 0)
+                        title_col = 1
+                        for c in range(1, max_col + 1):
+                            hv = sh.cell(row=1, column=c).value
+                            if hv is not None and str(hv).strip().lower() == "title":
+                                title_col = c
+                                break
+                        for r in range(2, max_row + 1):
+                            v = sh.cell(row=r, column=title_col).value
+                            if _is_filled_excel_value(v):
+                                title_count += 1
+                    finally:
+                        wb.close()
+                except Exception:
+                    pass
+            items.append(
+                {
+                    "project": project,
+                    "name": os.path.basename(fp),
+                    "row_count": int(row_count),
+                    "title_count": int(title_count),
+                    "path": fp,
+                    "exists": bool(exists),
+                }
+            )
+        return jsonify({"ok": True, "mode": "projects", "items": items})
+
     pattern = (request.args.get("pattern") or "START*.xlsx").strip() or "START*.xlsx"
     starts_dir = _starts_dir_path()
     if not os.path.isdir(starts_dir):
@@ -695,9 +770,10 @@ def api_starts_files():
 
 @app.route("/api/starts-read")
 def api_starts_read():
+    project = (request.args.get("project") or "").strip()
     file_name = (request.args.get("file") or "").strip()
     try:
-        fp = _safe_start_file_path(file_name)
+        fp = _project_start_file_path(project) if project else _safe_start_file_path(file_name)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     if not os.path.isfile(fp):
@@ -738,6 +814,7 @@ def api_starts_read():
         return jsonify(
             {
                 "ok": True,
+                "project": project,
                 "file": file_name,
                 "headers": headers,
                 "rows": rows,
@@ -783,11 +860,12 @@ def api_starts_create():
 @app.route("/api/starts-add-rows", methods=["POST"])
 def api_starts_add_rows():
     data = request.get_json(force=True, silent=True) or {}
+    project = str(data.get("project") or "").strip()
     file_name = str(data.get("file") or "").strip()
     titles = data.get("titles")
     rows = data.get("rows")
     try:
-        fp = _safe_start_file_path(file_name)
+        fp = _project_start_file_path(project) if project else _safe_start_file_path(file_name)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     if not os.path.isfile(fp):
@@ -850,6 +928,7 @@ def api_starts_add_rows():
         return jsonify(
             {
                 "ok": True,
+                "project": project,
                 "file": file_name,
                 "added_rows": len(normalized_rows),
                 "start_excel_row": int(start_row),
@@ -863,6 +942,7 @@ def api_starts_add_rows():
 @app.route("/api/starts-update-row", methods=["POST"])
 def api_starts_update_row():
     data = request.get_json(force=True, silent=True) or {}
+    project = str(data.get("project") or "").strip()
     file_name = str(data.get("file") or "").strip()
     excel_row = int(data.get("excel_row", 0) or 0)
     values = data.get("values")
@@ -872,7 +952,7 @@ def api_starts_update_row():
     if (not isinstance(values, dict) or not values) and (not isinstance(values_by_col, dict) or not values_by_col):
         return jsonify({"ok": False, "error": "values or values_by_col is required"}), 400
     try:
-        fp = _safe_start_file_path(file_name)
+        fp = _project_start_file_path(project) if project else _safe_start_file_path(file_name)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     if not os.path.isfile(fp):
@@ -916,7 +996,7 @@ def api_starts_update_row():
                 col = ensure_col(str(k))
                 sh.cell(row=excel_row, column=col, value=v)
         wb.save(fp)
-        return jsonify({"ok": True, "file": file_name, "excel_row": excel_row})
+        return jsonify({"ok": True, "project": project, "file": file_name, "excel_row": excel_row})
     finally:
         wb.close()
 
@@ -924,12 +1004,13 @@ def api_starts_update_row():
 @app.route("/api/starts-delete-rows", methods=["POST"])
 def api_starts_delete_rows():
     data = request.get_json(force=True, silent=True) or {}
+    project = str(data.get("project") or "").strip()
     file_name = str(data.get("file") or "").strip()
     rows = data.get("excel_rows")
     if not isinstance(rows, list) or not rows:
         return jsonify({"ok": False, "error": "excel_rows list is required"}), 400
     try:
-        fp = _safe_start_file_path(file_name)
+        fp = _project_start_file_path(project) if project else _safe_start_file_path(file_name)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     if not os.path.isfile(fp):
@@ -957,7 +1038,7 @@ def api_starts_delete_rows():
                 sh.delete_rows(rr, 1)
                 deleted += 1
         wb.save(fp)
-        return jsonify({"ok": True, "file": file_name, "deleted_rows": deleted})
+        return jsonify({"ok": True, "project": project, "file": file_name, "deleted_rows": deleted})
     finally:
         wb.close()
 
@@ -965,9 +1046,10 @@ def api_starts_delete_rows():
 @app.route("/api/starts-clear-file", methods=["POST"])
 def api_starts_clear_file():
     data = request.get_json(force=True, silent=True) or {}
+    project = str(data.get("project") or "").strip()
     file_name = str(data.get("file") or "").strip()
     try:
-        fp = _safe_start_file_path(file_name)
+        fp = _project_start_file_path(project) if project else _safe_start_file_path(file_name)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     if not os.path.isfile(fp):
@@ -985,7 +1067,7 @@ def api_starts_clear_file():
                     sh.cell(row=r, column=c, value=None)
                 cleared += 1
         wb.save(fp)
-        return jsonify({"ok": True, "file": file_name, "cleared_rows": int(cleared)})
+        return jsonify({"ok": True, "project": project, "file": file_name, "cleared_rows": int(cleared)})
     finally:
         wb.close()
 
@@ -1345,6 +1427,54 @@ def _write_sites_doc(doc: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(txt)
     os.replace(tmp, SITES_FILE_PATH)
+
+
+def _ensure_project_output_files_for_sites(doc: Optional[dict] = None) -> None:
+    """
+    Ensure each site has ALL/<out_dir>/ with START.xlsx (or site start_file)
+    and Recipes.xlsx.
+    """
+    d = doc if isinstance(doc, dict) else _load_sites_file_app()
+    sites = d.get("sites") if isinstance(d, dict) else None
+    if not isinstance(sites, list):
+        return
+
+    for s in sites:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id", "") or "").strip()
+        out_dir = str(s.get("out_dir", "") or "").strip() or (f"{sid}-out" if sid else "")
+        if not out_dir:
+            continue
+        target_dir = os.path.join(_APP_ROOT, "ALL", out_dir)
+        os.makedirs(target_dir, exist_ok=True)
+
+        start_name = str(s.get("start_file", "") or "").strip() or "START.xlsx"
+        start_name = os.path.basename(start_name) or "START.xlsx"
+        start_path = os.path.join(target_dir, start_name)
+        recipes_path = os.path.join(target_dir, "Recipes.xlsx")
+
+        if not os.path.isfile(start_path):
+            wb = openpyxl.Workbook()
+            try:
+                sh = wb.active
+                sh.title = "Titles"
+                sh.cell(row=1, column=1, value="Title")
+                wb.save(start_path)
+            finally:
+                wb.close()
+
+        if not os.path.isfile(recipes_path):
+            wb = openpyxl.Workbook()
+            try:
+                sh = wb.active
+                sh.title = "Recipes"
+                sh.cell(row=1, column=1, value="Title")
+                sh.cell(row=1, column=2, value="Recipe")
+                sh.cell(row=1, column=3, value="Generated At")
+                wb.save(recipes_path)
+            finally:
+                wb.close()
 
 
 def _next_default_site_id(sites: list) -> str:
@@ -2104,16 +2234,18 @@ def generate_log_in_batches(script_names, batch_size=3, env_extra=None):
 
 @app.route("/stream-all-start")
 def stream_all_start():
-    jobs, info = _build_global_start_runtime_jobs(jobs_for_start1_all_except_s2())
-    if info.get("mode") == "allocated":
-        app.logger.info(
-            "Global START allocation: %s titles for %s projects. Usage report: %s",
-            info.get("titles_total"),
-            info.get("projects_total"),
-            info.get("usage_file"),
-        )
+    raw_lim = (request.args.get("title_limit") or "").strip()
+    env_extra = None
+    if raw_lim:
+        try:
+            lim = max(0, int(raw_lim))
+            if lim > 0:
+                env_extra = {"PINTEREST_START_LIMIT": str(lim)}
+        except ValueError:
+            env_extra = None
+    jobs = jobs_for_start1_all_except_s2()
     return Response(
-        generate_log_parallel(jobs), mimetype="text/event-stream"
+        generate_log_parallel(jobs, env_extra=env_extra), mimetype="text/event-stream"
     )
 
 
@@ -2418,13 +2550,23 @@ def stream_single():
     u = _unit_by_label(project)
     if not u:
         return Response("Unknown project", status=404)
+    env = dict(u.get("env") or {})
+    if action == "start":
+        raw_lim = (request.args.get("title_limit") or "").strip()
+        if raw_lim:
+            try:
+                lim = max(0, int(raw_lim))
+                if lim > 0:
+                    env["PINTEREST_START_LIMIT"] = str(lim)
+            except ValueError:
+                pass
     return Response(
         generate_log_parallel(
             [
                 (
                     u["folder"],
                     script,
-                    u.get("env") or {},
+                    env,
                     u["log_id"],
                     u["label"],
                 )
@@ -2614,6 +2756,7 @@ def manage_sites():
             data["pipeline_code_folder"] = (str(data.get("pipeline_code_folder") or "A1-Pinterest_01").strip() or "A1-Pinterest_01")
             try:
                 _write_sites_doc(data)
+                _ensure_project_output_files_for_sites(data)
             except OSError as e:
                 flash("Could not save sites.json: " + str(e), "error")
                 return redirect(url_for("manage_sites"))
@@ -2628,6 +2771,7 @@ def manage_sites():
                 data.setdefault("pipeline_code_folder", "A1-Pinterest_01")
                 try:
                     _write_sites_doc(data)
+                    _ensure_project_output_files_for_sites(data)
                 except OSError as e:
                     flash("Could not save sites.json: " + str(e), "error")
                     return redirect(url_for("manage_sites"))
@@ -2665,6 +2809,7 @@ def manage_sites():
         doc = {"pipeline_code_folder": pl, "sites": sites_out}
         try:
             _write_sites_doc(doc)
+            _ensure_project_output_files_for_sites(doc)
         except OSError as e:
             flash("Could not write config/sites.json: " + str(e), "error")
             return redirect(url_for("manage_sites"))
@@ -2674,6 +2819,7 @@ def manage_sites():
         )
         return redirect(url_for("manage_sites"))
     d = _load_sites_file_app()
+    _ensure_project_output_files_for_sites(d)
     if not isinstance(d, dict) or "sites" not in d or not isinstance(d.get("sites"), list):
         d = {"pipeline_code_folder": "A1-Pinterest_01", "sites": []}
     d.setdefault("pipeline_code_folder", "A1-Pinterest_01")
@@ -3493,6 +3639,7 @@ def delete_image_row():
 # -------------------- 8) Main Dashboard Page --------------------
 @app.route("/")
 def index():
+    _ensure_project_output_files_for_sites()
     starts_folder = os.path.join(os.getcwd(), "STARTS")
     if os.path.exists(starts_folder):
         xlsx_files = [f for f in os.listdir(starts_folder) if f.lower().endswith(".xlsx") and not f.startswith("~$")]
@@ -3692,6 +3839,19 @@ def index():
         }}
         .stat-chip-open {{ color: inherit !important; }}
         .stat-chip-open:hover {{ opacity: 0.85; }}
+        .stat-step-group {{
+          width: 100%;
+          margin-top: 2px;
+          padding-top: 2px;
+          border-top: 1px dashed #e3e6eb;
+        }}
+        .stat-step-title {{
+          font-size: 10px;
+          font-weight: 700;
+          color: #6c757d;
+          margin-right: 6px;
+          text-transform: uppercase;
+        }}
       </style>
       <script>
         var source = null;
@@ -3815,6 +3975,65 @@ def index():
           showColumnDetails(p, c);
         }}
 
+        function _statStepForColumn(name) {{
+          var lk = String(name || "").trim().toLowerCase();
+          if (["title", "recipe", "generated at"].includes(lk)) return "START";
+          if (["json recipe"].includes(lk)) return "JSON";
+          if (["prompt", "prompt image ingredients"].includes(lk)) return "PROMPT";
+          if (["main_image", "image_1", "image_2", "image_3", "image_4", "statu", "error", "main_image_ingredients", "image_ing_1", "image_ing_2", "image_ing_3", "image_ing_4", "statu_ing"].includes(lk)) return "IMAGINE";
+          if (["article"].includes(lk)) return "ARTICLE";
+          if (["recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords", "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms", "categories"].includes(lk)) return "PIN DATA";
+          if (["pinterest_image"].includes(lk)) return "PIN IMAGE";
+          if (["output_name"].includes(lk)) return "WP UPLOAD";
+          return "OTHER";
+        }}
+
+        function _renderStatChip(projectLabel, c) {{
+          var filled = Number(c.filled || 0);
+          var total = Number(c.total || 0);
+          var name = String(c.name || "");
+          var projEnc = encodeURIComponent(String(projectLabel || ""));
+          var nameEnc = encodeURIComponent(name);
+          var klass = "stat-chip-neutral";
+          var icon = "bx-minus-circle";
+          if (total > 0) {{
+            if (filled >= total) {{
+              klass = "stat-chip-good";
+              icon = "bx-check-circle";
+            }} else {{
+              klass = "stat-chip-bad";
+              icon = "bx-x-circle";
+            }}
+          }}
+          return ""
+            + "<span class='stat-chip " + klass + "' data-st-pe='" + projEnc + "' data-st-ce='" + nameEnc
+            + "' title='" + _escapeHtml(name + ": " + filled + "/" + total).replace(/'/g, "&#39;") + "'>"
+            + "<i class='bx " + icon + "'></i>"
+            + "<span class='stat-chip-count'>" + _escapeHtml(String(filled) + "/" + String(total)) + "</span>"
+            + "<span class='stat-chip-name'>" + _escapeHtml(name) + "</span>"
+            + "<i class='bx bx-expand-alt stat-chip-open' role='button' tabindex='0' title='Show details'></i>"
+            + "</span>";
+        }}
+
+        function _renderGroupedStats(projectLabel, cols) {{
+          if (!Array.isArray(cols) || !cols.length) return "No columns";
+          var order = ["START", "JSON", "PROMPT", "IMAGINE", "ARTICLE", "PIN DATA", "PIN IMAGE", "WP UPLOAD", "OTHER"];
+          var groups = {{}};
+          cols.forEach(function(c) {{
+            var step = _statStepForColumn(c && c.name);
+            if (!groups[step]) groups[step] = [];
+            groups[step].push(c);
+          }});
+          var html = [];
+          order.forEach(function(step) {{
+            var arr = groups[step] || [];
+            if (!arr.length) return;
+            var chips = arr.map(function(c) {{ return _renderStatChip(projectLabel, c); }}).join("");
+            html.push("<div class='stat-step-group'><span class='stat-step-title'>" + _escapeHtml(step) + ":</span>" + chips + "</div>");
+          }});
+          return html.join("");
+        }}
+
         function refreshProjectStats(logId, projectLabel) {{
           var el = document.getElementById("stats_" + logId);
           if (!el) return;
@@ -3823,33 +4042,7 @@ def index():
               el.textContent = "No columns";
               return;
             }}
-            var pieces = cols.map(function(c) {{
-              var filled = Number(c.filled || 0);
-              var total = Number(c.total || 0);
-              var name = String(c.name || "");
-              var projEnc = encodeURIComponent(String(projectLabel || ""));
-              var nameEnc = encodeURIComponent(name);
-              var klass = "stat-chip-neutral";
-              var icon = "bx-minus-circle";
-              if (total > 0) {{
-                if (filled >= total) {{
-                  klass = "stat-chip-good";
-                  icon = "bx-check-circle";
-                }} else {{
-                  klass = "stat-chip-bad";
-                  icon = "bx-x-circle";
-                }}
-              }}
-              return ""
-                + "<span class='stat-chip " + klass + "' data-st-pe='" + projEnc + "' data-st-ce='" + nameEnc
-                + "' title='" + _escapeHtml(name + ": " + filled + "/" + total).replace(/'/g, "&#39;") + "'>"
-                + "<i class='bx " + icon + "'></i>"
-                + "<span class='stat-chip-count'>" + _escapeHtml(String(filled) + "/" + String(total)) + "</span>"
-                + "<span class='stat-chip-name'>" + _escapeHtml(name) + "</span>"
-                + "<i class='bx bx-expand-alt stat-chip-open' role='button' tabindex='0' title='Show details'></i>"
-                + "</span>";
-            }});
-            el.innerHTML = pieces.join("");
+            el.innerHTML = _renderGroupedStats(projectLabel, cols);
           }}
           fetch("/api/project-stats?project=" + encodeURIComponent(projectLabel))
             .then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status)); return j; }}); }})
@@ -3866,67 +4059,13 @@ def index():
         }}
 
         function refreshAllProjectStats() {{
-          fetch("/api/projects-stats")
-            .then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status)); return j; }}); }})
-            .then(function(data) {{
-              var items = (data && Array.isArray(data.items)) ? data.items : [];
-              if (!items.length) {{
-                (projectUnits || []).forEach(function(u) {{ refreshProjectStats(u.log_id, u.label); }});
-                return;
-              }}
-              var seen = {{}};
-              items.forEach(function(it) {{
-                var lid = String(it.log_id || "");
-                var projectLabel = String(it.project || "");
-                var el = document.getElementById("stats_" + lid);
-                if (!el) return;
-                seen[lid] = true;
-                if (!it.ok) {{
-                  el.textContent = "Stats unavailable";
-                  return;
-                }}
-                var cols = Array.isArray(it.columns) ? it.columns : [];
-                if (!cols.length) {{
-                  el.textContent = "No columns";
-                  return;
-                }}
-                var pieces = cols.map(function(c) {{
-                  var filled = Number(c.filled || 0);
-                  var total = Number(c.total || 0);
-                  var name = String(c.name || "");
-                  var projEnc = encodeURIComponent(String(projectLabel || ""));
-                  var nameEnc = encodeURIComponent(name);
-                  var klass = "stat-chip-neutral";
-                  var icon = "bx-minus-circle";
-                  if (total > 0) {{
-                    if (filled >= total) {{
-                      klass = "stat-chip-good";
-                      icon = "bx-check-circle";
-                    }} else {{
-                      klass = "stat-chip-bad";
-                      icon = "bx-x-circle";
-                    }}
-                  }}
-                  return ""
-                    + "<span class='stat-chip " + klass + "' data-st-pe='" + projEnc + "' data-st-ce='" + nameEnc
-                    + "' title='" + _escapeHtml(name + ": " + filled + "/" + total).replace(/'/g, "&#39;") + "'>"
-                    + "<i class='bx " + icon + "'></i>"
-                    + "<span class='stat-chip-count'>" + _escapeHtml(String(filled) + "/" + String(total)) + "</span>"
-                    + "<span class='stat-chip-name'>" + _escapeHtml(name) + "</span>"
-                    + "<i class='bx bx-expand-alt stat-chip-open' role='button' tabindex='0' title='Show details'></i>"
-                    + "</span>";
-                }});
-                el.innerHTML = pieces.join("");
-              }});
-              (projectUnits || []).forEach(function(u) {{
-                if (!seen[String(u.log_id || "")]) refreshProjectStats(u.log_id, u.label);
-              }});
-            }})
-            .catch(function() {{
-              (projectUnits || []).forEach(function(u) {{
-                refreshProjectStats(u.log_id, u.label);
-              }});
-            }});
+          // Progressive load: fetch each project stats separately so UI becomes responsive faster.
+          var units = Array.isArray(projectUnits) ? projectUnits.slice() : [];
+          units.forEach(function(u, idx) {{
+            setTimeout(function() {{
+              refreshProjectStats(u.log_id, u.label);
+            }}, idx * 120);
+          }});
         }}
 
         document.addEventListener("click", function(ev) {{
@@ -3983,6 +4122,27 @@ def index():
             source = null;
           }};
           btn.classList.add("active");
+        }}
+
+        function askStartLimit() {{
+          var raw = prompt("How many titles to use now? (empty = all)", "");
+          if (raw === null) return null;
+          var s = String(raw || "").trim();
+          if (!s) return "";
+          var n = Number(s);
+          if (!Number.isFinite(n) || n <= 0) {{
+            alert("Please enter a positive number, or leave empty for all.");
+            return null;
+          }}
+          return String(Math.floor(n));
+        }}
+
+        function startAllStart(btn) {{
+          var lim = askStartLimit();
+          if (lim === null) return;
+          var ep = "/stream-all-start";
+          if (lim) ep += "?title_limit=" + encodeURIComponent(lim);
+          startLog(ep, btn);
         }}
 
         function stopLog() {{
@@ -4122,6 +4282,14 @@ def index():
           var buttons = card.querySelectorAll('button.project-action');
           buttons.forEach(function(b) {{ b.disabled = true; }});
           var ep = "/stream-single?project=" + encodeURIComponent(projectLabel) + "&action=" + encodeURIComponent(action);
+          if (action === "start") {{
+            var lim = askStartLimit();
+            if (lim === null) {{
+              buttons.forEach(function(b) {{ b.disabled = false; }});
+              return;
+            }}
+            if (lim) ep += "&title_limit=" + encodeURIComponent(lim);
+          }}
           var source = new EventSource(ep);
           projectStreams[logId] = source;
           source.onmessage = function(e) {{
@@ -4699,7 +4867,7 @@ def index():
             <strong>Actions</strong>
           </div>
           <div class="card-body">
-            <button class="number-button" data-number="1" onclick="startLog('/stream-all-start', this)">START</button>
+            <button class="number-button" data-number="1" onclick="startAllStart(this)">START</button>
             <button class="number-button" data-number="2" onclick="startLog('/stream-all-json', this)">JSON</button>
             <button class="number-button" data-number="2" onclick="startLog('/stream-all-prompt', this)">PROMPT</button>
             <button class="number-button" data-number="ALL" onclick="startLog('/stream-imagine-all', this)">IMAGINE ALL</button>

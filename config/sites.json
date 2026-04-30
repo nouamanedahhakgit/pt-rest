@@ -2,128 +2,28 @@
   "pipeline_code_folder": "A1-Pinterest_01",
   "sites": [
     {
-      "id": "p01",
-      "display_name": "A1-Pinterest_01",
-      "out_dir": "A1-Pinterest_01-out",
-      "wordpress_url": "https://example---1.com",
-      "wordpress_user": "user--1",
-      "prompts": {
-        "a2_json": {
-          "preamble": "Recipe title: "
-        },
-        "a2_prompt": {
-          "chat_max_tokens_default": 650
-        },
-        "a4_articles": {
-          "outline": {
-            "max_tokens": 1000
-          }
-        },
-        "a5_pin_data": {
-          "categorize": {
-            "max_tokens": 5
-          }
-        },
-        "a8_pin_bulk": {
-          "categorize_boards": {
-            "max_tokens": 60
-          }
-        }
-      },
-      "wordpress_app_password": "app-password-1----1"
-    },
-    {
-      "id": "p02",
-      "display_name": "A2-Pinterest_02",
-      "out_dir": "A2-Pinterest_02-out",
-      "wordpress_url": "https://example-2.com",
-      "wordpress_user": "user1",
-      "wordpress_app_password": "app-password-2"
-    },
-    {
-      "id": "p03",
-      "display_name": "A3-Pinterest_03",
-      "out_dir": "A3-Pinterest_03-out",
-      "openai_api_key": "aaa",
-      "wordpress_url": "https://example-3.com",
-      "wordpress_user": "user1",
-      "wordpress_app_password": "app-password-3"
-    },
-    {
-      "id": "p04",
-      "display_name": "New site (p04)",
-      "out_dir": "p04-out",
-      "wordpress_url": "https://"
-    },
-    {
-      "id": "p05",
-      "display_name": "New site (p05)",
-      "out_dir": "p05-out",
-      "wordpress_url": "https://site-5.com",
-      "wordpress_user": "1111",
-      "wordpress_app_password": "1111"
-    },
-    {
-      "id": "p06",
-      "display_name": "New site (p06)",
-      "out_dir": "p06-out",
-      "wordpress_url": "https://site-6.com",
-      "wordpress_user": "1111",
-      "settings": {
-        "category_id_mapping": {
-          "drinks": 1,
-          "dessert": 2,
-          "appetizers": 3,
-          "dinner": 4
-        },
-        "pinterest_boards": [
-          "Board A",
-          "Board B"
-        ]
-      },
-      "prompts": {
-        "a1_start": {
-          "repair_recipe": {
-            "system": "You are a strict recipe formatter. Do NOT change ingredients or instructions meaningfully. Only fix formatting and add missing metadata lines at the end. Calories MUST be present and should be clearly labeled as an estimate if uncertain.",
-            "user_template": "Here is a recipe text. Make it match EXACTLY this structure:\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ...\n\nInstructions:\n1. ...\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Keep Ingredients and Instructions the same (do not rewrite).\n- If any of Prep/Cook/Total/Course/Cuisine/Servings are missing, set them to N/A.\n- Calories MUST NOT be N/A. Provide an estimated calories number per serving, and write it like:\n  \"Calories: ~320 per serving\"\n- Output ONLY the recipe in that format. No markdown.\n\nRecipe Text:\n\"\"\"{recipe_text}\"\"\""
-          },
-          "generate_from_title": {
-            "system": "You are a professional recipe writer. Follow the exact format. Calories line is REQUIRED and should be an estimate if needed.",
-            "user_template": "Create ONE unique recipe for this title:\n{title}\n\nReturn ONLY this structure (no markdown, no extra text):\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ingredient line\n- ingredient line\n\nInstructions:\n1. step\n2. step\n3. step\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Ingredients must be bullet lines starting with \"- \".\n- Instructions must be numbered (6–11 steps).\n- Calories MUST be present. If you can't know exactly, estimate and use \"~\" like:\n  Calories: ~320 per serving"
-          }
-        }
-      },
-      "wordpress_app_password": "1111"
-    },
-    {
-      "id": "p07",
-      "display_name": "New site (p07)",
-      "out_dir": "p07-out",
-      "wordpress_url": "https://"
-    },
-    {
-      "id": "p08",
-      "display_name": "New site (p08)",
-      "out_dir": "p08-out",
-      "wordpress_url": "https://"
-    },
-    {
-      "id": "p10",
-      "display_name": "New site (p10)",
-      "out_dir": "p10-out",
+      "id": "p11",
+      "display_name": "New site (p11)",
+      "out_dir": "p11-out",
       "wordpress_url": "https://",
-      "settings": {
-        "category_id_mapping": {
-          "drinks": 1,
-          "dessert": 2,
-          "appetizers": 3,
-          "dinner": 4
-        },
-        "pinterest_boards": [
-          "Board A",
-          "Board B"
-        ]
-      }
+      "wordpress_user": "",
+      "wordpress_app_password": ""
+    },
+    {
+      "id": "p12",
+      "display_name": "New site (p12)",
+      "out_dir": "p12-out",
+      "wordpress_url": "https://",
+      "wordpress_user": "",
+      "wordpress_app_password": ""
+    },
+    {
+      "id": "p13",
+      "display_name": "New site (p13)",
+      "out_dir": "p13-out",
+      "wordpress_url": "https://",
+      "wordpress_user": "",
+      "wordpress_app_password": ""
     }
   ]
 }

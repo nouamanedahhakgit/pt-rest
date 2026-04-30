@@ -100,7 +100,7 @@
   </div>
 
   <script>
-    let currentFile = "";
+    let currentProject = "";
     let currentOffset = 0;
     const pageSize = 100;
     let currentHeaders = [];
@@ -114,20 +114,20 @@
     }
 
     async function loadFiles() {
-      const pattern = encodeURIComponent(document.getElementById("pattern").value || "START*.xlsx");
-      const res = await fetch(`/api/starts-files?pattern=${pattern}`);
+      const res = await fetch(`/api/starts-files`);
       const js = await res.json();
       const sel = document.getElementById("fileSelect");
       sel.innerHTML = "";
       (js.items || []).forEach((it) => {
         const opt = document.createElement("option");
-        opt.value = it.name;
-        opt.textContent = `${it.name}  (rows:${it.row_count}, titles:${it.title_count})`;
+        opt.value = it.project || it.name;
+        const mark = it.exists ? "" : " [missing]";
+        opt.textContent = `${it.project || it.name}${mark} (rows:${it.row_count}, titles:${it.title_count})`;
         sel.appendChild(opt);
       });
       if (sel.options.length > 0) {
-        if (!currentFile) currentFile = sel.options[0].value;
-        sel.value = currentFile;
+        if (!currentProject) currentProject = sel.options[0].value;
+        sel.value = currentProject;
         onSelectFile();
       } else {
         document.getElementById("fileMeta").textContent = "No files";
@@ -189,44 +189,32 @@
     }
 
     async function loadRows() {
-      if (!currentFile) return;
-      const q = `file=${encodeURIComponent(currentFile)}&offset=${currentOffset}&limit=${pageSize}`;
+      if (!currentProject) return;
+      const q = `project=${encodeURIComponent(currentProject)}&offset=${currentOffset}&limit=${pageSize}`;
       const res = await fetch(`/api/starts-read?${q}`);
       const js = await res.json();
       if (!js.ok) {
         showMsg(js.error || "Read failed", "error");
         return;
       }
-      document.getElementById("rowsMeta").textContent =
-        `${js.file} | showing ${js.rows.length} rows | total ${js.total_rows} | offset ${js.offset}`;
+      document.getElementById("rowsMeta").textContent = `${currentProject} | showing ${js.rows.length} rows | total ${js.total_rows} | offset ${js.offset}`;
       renderRows(js.headers || [], js.rows || []);
     }
 
     function onSelectFile() {
       const sel = document.getElementById("fileSelect");
-      currentFile = sel.value || "";
+      currentProject = sel.value || "";
       currentOffset = 0;
-      document.getElementById("fileMeta").textContent = currentFile ? `Selected: ${currentFile}` : "No file selected";
+      document.getElementById("fileMeta").textContent = currentProject ? `Selected project: ${currentProject}` : "No project selected";
       loadRows();
     }
 
     async function createFile() {
-      const file = (document.getElementById("newFileName").value || "").trim();
-      if (!file) return showMsg("Enter file name like START51.xlsx", "error");
-      const res = await fetch("/api/starts-create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file, headers: ["Title"] }),
-      });
-      const js = await res.json();
-      if (!js.ok) return showMsg(js.error || "Create failed", "error");
-      showMsg(`Created ${js.file}`, "ok");
-      currentFile = js.file;
-      await loadFiles();
+      showMsg("Project START files are auto-created from projects/sites config.", "ok");
     }
 
     async function addRows() {
-      if (!currentFile) return showMsg("Select a file first", "error");
+      if (!currentProject) return showMsg("Select a project first", "error");
       const lines = (document.getElementById("titlesInput").value || "")
         .split(/\r?\n/)
         .map((s) => s.trim())
@@ -236,18 +224,18 @@
       const res = await fetch("/api/starts-add-rows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file: currentFile, titles: lines }),
+        body: JSON.stringify({ project: currentProject, titles: lines }),
       });
       const js = await res.json();
       if (!js.ok) return showMsg(js.error || "Append failed", "error");
       document.getElementById("titlesInput").value = "";
-      showMsg(`Added ${js.added_rows} rows to ${js.file}`, "ok");
+      showMsg(`Added ${js.added_rows} rows to ${currentProject} START`, "ok");
       await loadFiles();
       await loadRows();
     }
 
     async function saveDirtyRows() {
-      if (!currentFile) return showMsg("Select a file first", "error");
+      if (!currentProject) return showMsg("Select a project first", "error");
       const rows = Array.from(dirtyRows).map((x) => Number(x)).filter((x) => x >= 2);
       if (rows.length === 0) return showMsg("No edited rows to save", "error");
       let okCount = 0;
@@ -267,7 +255,7 @@
         const res = await fetch("/api/starts-update-row", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ file: currentFile, excel_row: rr, values, values_by_col: valuesByCol }),
+          body: JSON.stringify({ project: currentProject, excel_row: rr, values, values_by_col: valuesByCol }),
         });
         const js = await res.json();
         if (js.ok) okCount += 1;
@@ -280,11 +268,11 @@
     async function deleteRows(excelRows) {
       const rows = (excelRows || []).map((x) => Number(x)).filter((x) => x >= 2);
       if (rows.length === 0) return showMsg("No rows selected", "error");
-      if (!confirm(`Delete ${rows.length} row(s) from ${currentFile}?`)) return;
+      if (!confirm(`Delete ${rows.length} row(s) from ${currentProject}?`)) return;
       const res = await fetch("/api/starts-delete-rows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file: currentFile, excel_rows: rows }),
+        body: JSON.stringify({ project: currentProject, excel_rows: rows }),
       });
       const js = await res.json();
       if (!js.ok) return showMsg(js.error || "Delete failed", "error");
@@ -294,16 +282,16 @@
     }
 
     async function clearFileData() {
-      if (!currentFile) return showMsg("Select a file first", "error");
-      if (!confirm(`Clear ALL data rows in ${currentFile}? (Header row will stay)`)) return;
+      if (!currentProject) return showMsg("Select a project first", "error");
+      if (!confirm(`Clear ALL data rows in ${currentProject}? (Header row will stay)`)) return;
       const res = await fetch("/api/starts-clear-file", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file: currentFile }),
+        body: JSON.stringify({ project: currentProject }),
       });
       const js = await res.json();
       if (!js.ok) return showMsg(js.error || "Clear failed", "error");
-      showMsg(`Cleared ${js.cleared_rows} row(s) in ${js.file}`, "ok");
+      showMsg(`Cleared ${js.cleared_rows} row(s) in ${currentProject} START`, "ok");
       currentOffset = 0;
       await loadFiles();
       await loadRows();
