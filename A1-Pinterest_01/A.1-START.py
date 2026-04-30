@@ -143,6 +143,38 @@ def generate_recipe_from_title(title: str) -> str:
 def process_titles_to_recipes(input_file_path: str, output_file_path: str):
     df = pd.read_excel(input_file_path)
 
+    def _canonical_col_name(col) -> str:
+        raw = str(col or "").strip()
+        key = re.sub(r"\s+", " ", raw).strip().lower()
+        aliases = {
+            "title": "Title",
+            "recipe": "Recipe",
+            "generated at": "Generated At",
+            "generated_at": "Generated At",
+            "generatedat": "Generated At",
+            "used": "used",
+        }
+        return aliases.get(key, raw)
+
+    def _normalize_df_columns(frame: pd.DataFrame) -> pd.DataFrame:
+        out = frame.copy()
+        out.columns = [_canonical_col_name(c) for c in out.columns]
+        return out
+
+    def _series_for_col(frame: pd.DataFrame, name: str) -> pd.Series:
+        if name not in frame.columns:
+            return pd.Series([""] * len(frame), index=frame.index)
+        subset = frame.loc[:, frame.columns == name]
+        if isinstance(subset, pd.DataFrame):
+            if subset.shape[1] == 1:
+                return subset.iloc[:, 0]
+            # If duplicate columns exist, keep first non-empty value across them.
+            merged = subset.astype(str).replace({"nan": "", "None": ""}).applymap(lambda v: str(v).strip())
+            return merged.bfill(axis=1).iloc[:, 0]
+        return subset
+
+    df = _normalize_df_columns(df)
+
     if "Title" not in df.columns:
         raise RuntimeError("Column 'Title' is required.")
 
@@ -196,17 +228,22 @@ def process_titles_to_recipes(input_file_path: str, output_file_path: str):
     else:
         existing_df = pd.DataFrame(columns=["Title", "Recipe", "Generated At"])
 
-    for col in ["Title", "Recipe", "Generated At"]:
-        if col not in existing_df.columns:
-            existing_df[col] = ""
-    existing_df = existing_df[["Title", "Recipe", "Generated At"]].copy()
+    existing_df = _normalize_df_columns(existing_df)
+    existing_df = pd.DataFrame(
+        {
+            "Title": _series_for_col(existing_df, "Title"),
+            "Recipe": _series_for_col(existing_df, "Recipe"),
+            "Generated At": _series_for_col(existing_df, "Generated At"),
+        },
+        index=existing_df.index,
+    )
     existing_df["Title"] = existing_df["Title"].apply(_norm_title)
     existing_df = existing_df[existing_df["Title"] != ""].copy()
     existing_df = existing_df.drop_duplicates(subset=["Title"], keep="last")
     existing_titles_with_recipe = set(
-        existing_df[
-            existing_df["Recipe"].apply(lambda v: bool(str(v or "").strip()))
-        ]["Title"].tolist()
+        title
+        for title, recipe in zip(existing_df["Title"].tolist(), existing_df["Recipe"].tolist())
+        if bool(str(recipe or "").strip())
     )
 
     total_rows = len(title_positions)
