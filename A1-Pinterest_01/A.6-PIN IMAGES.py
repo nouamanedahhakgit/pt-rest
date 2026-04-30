@@ -122,7 +122,7 @@ def create_image(template_path, url_img1, url_img2, title_text,
 
 # MAIN
 if __name__ == "__main__":
-    templates_dir = "templates"
+    templates_dir = a1_config.resolve_templates_dir()
     output_dir = a1_config.all_output_join("output_images")
     os.makedirs(output_dir, exist_ok=True)
 

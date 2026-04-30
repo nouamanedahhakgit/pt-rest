@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -319,6 +320,34 @@ def all_output_join(*parts: str) -> str:
     for a in parts:
         p = p / a
     return str(p.resolve())
+
+
+def resolve_templates_dir() -> str:
+    """
+    Per-project image templates folder.
+    Default: ALL/<out_dir>/templates
+    Optional site override: templates_dir (folder name only, kept inside ALL/<out_dir>).
+    Seed missing files from A1-Pinterest_01/templates.
+    """
+    site = get_active_site()
+    out_dir = Path(all_output_dir())
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sub = str((site or {}).get("templates_dir", "") or "").strip() or "templates"
+    sub = Path(sub).name or "templates"
+    target = (out_dir / sub).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    src = (A1_DIR / "templates").resolve()
+    if src.is_dir():
+        for p in src.iterdir():
+            if p.is_file():
+                dst = target / p.name
+                if not dst.exists():
+                    try:
+                        shutil.copy2(str(p), str(dst))
+                    except OSError:
+                        pass
+    return str(target)
 
 
 def resolve_start_titles_excel() -> str:

@@ -88,6 +88,7 @@
           <div class="row g-2 mb-3">
             <div class="col-md-3"><label class="form-label">log_id</label><input class="form-control" name="site_{{ i }}_log_id" value="{{ site.get('log_id', '') }}" placeholder="optional DOM id" /></div>
             <div class="col-md-3"><label class="form-label">prompts_dir</label><input class="form-control" name="site_{{ i }}_prompts_dir" value="{{ site.get('prompts_dir', '') }}" placeholder="optional subdir under site_prompts" /></div>
+            <div class="col-md-3"><label class="form-label">templates_dir</label><input class="form-control" name="site_{{ i }}_templates_dir" value="{{ site.get('templates_dir', '') }}" placeholder="default: templates" /></div>
           </div>
 
           <h6 class="text-secondary">WordPress</h6>

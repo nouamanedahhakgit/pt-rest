@@ -1390,6 +1390,7 @@ _SITE_FORM_STRING_KEYS = (
     "display_name",
     "out_dir",
     "start_file",
+    "templates_dir",
     "log_id",
     "prompts_dir",
     "openai_api_key",
@@ -1439,6 +1440,11 @@ def _ensure_project_output_files_for_sites(doc: Optional[dict] = None) -> None:
     if not isinstance(sites, list):
         return
 
+    pipeline_folder = ""
+    if isinstance(d, dict):
+        pipeline_folder = str(d.get("pipeline_code_folder", "") or "").strip() or "A1-Pinterest_01"
+    template_source_dir = os.path.join(_APP_ROOT, pipeline_folder, "templates")
+
     for s in sites:
         if not isinstance(s, dict):
             continue
@@ -1475,6 +1481,20 @@ def _ensure_project_output_files_for_sites(doc: Optional[dict] = None) -> None:
                 wb.save(recipes_path)
             finally:
                 wb.close()
+
+        templates_sub = str(s.get("templates_dir", "") or "").strip() or "templates"
+        templates_sub = os.path.basename(templates_sub) or "templates"
+        target_templates_dir = os.path.join(target_dir, templates_sub)
+        os.makedirs(target_templates_dir, exist_ok=True)
+        if os.path.isdir(template_source_dir):
+            for nm in os.listdir(template_source_dir):
+                src = os.path.join(template_source_dir, nm)
+                dst = os.path.join(target_templates_dir, nm)
+                if os.path.isfile(src) and not os.path.exists(dst):
+                    try:
+                        shutil.copy2(src, dst)
+                    except OSError:
+                        pass
 
 
 def _next_default_site_id(sites: list) -> str:
@@ -1537,6 +1557,7 @@ def _default_new_site(sites: list) -> dict:
         "id": sid,
         "display_name": f"New site ({sid})",
         "out_dir": f"{sid}-out",
+        "templates_dir": "templates",
         "wordpress_url": "https://",
         "wordpress_user": "",
         "wordpress_app_password": "",
@@ -3859,6 +3880,11 @@ def index():
         var projectUnits = {project_units_json};
         var numXlsx = {num_xlsx};
         var _projectLogHistory = {{}};
+        var STATS_REFRESH_MS = 30000;
+        var _statsLastRefreshMsByLog = {{}};
+        var _projectRunStartedMs = {{}};
+        var _statsTickerId = null;
+        var _statsAutoRefreshId = null;
 
         function _logStorageKey(logId) {{
           return "pinterest_log_" + String(logId || "");
@@ -3920,6 +3946,63 @@ def index():
             .replaceAll("&", "&amp;")
             .replaceAll("<", "&lt;")
             .replaceAll(">", "&gt;");
+        }}
+
+        function _fmtDuration(ms) {{
+          var total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+          var h = Math.floor(total / 3600);
+          var m = Math.floor((total % 3600) / 60);
+          var s = total % 60;
+          function p2(n) {{ return String(n).padStart(2, "0"); }}
+          if (h > 0) return String(h) + ":" + p2(m) + ":" + p2(s);
+          return String(m) + ":" + p2(s);
+        }}
+
+        function _humanAgo(ms) {{
+          if (!ms) return "never";
+          var sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+          if (sec < 60) return String(sec) + "s ago";
+          var min = Math.floor(sec / 60);
+          var rem = sec % 60;
+          return String(min) + "m " + String(rem) + "s ago";
+        }}
+
+        function _isProjectRunning(logId) {{
+          return !!_projectRunStartedMs[logId];
+        }}
+
+        function _statsMetaHtml(logId) {{
+          var last = _humanAgo(_statsLastRefreshMsByLog[logId] || 0);
+          var running = _isProjectRunning(logId);
+          var runText = running
+            ? ("Running for " + _fmtDuration(Date.now() - _projectRunStartedMs[logId]))
+            : "Idle";
+          return "<div class='stats-meta-line text-muted'>"
+            + "<span class='me-2'><i class='bx bx-time-five'></i> " + _escapeHtml(runText) + "</span>"
+            + "<span><i class='bx bx-refresh'></i> Refreshed " + _escapeHtml(last) + " (auto " + String(Math.floor(STATS_REFRESH_MS / 1000)) + "s)</span>"
+            + "</div>";
+        }}
+
+        function refreshProjectStatsMetaOnly(logId) {{
+          var el = document.getElementById("stats_" + logId);
+          if (!el) return;
+          var meta = _statsMetaHtml(logId);
+          var old = el.querySelector(".stats-meta-line");
+          if (old) {{
+            old.outerHTML = meta;
+          }} else {{
+            el.innerHTML = el.innerHTML + meta;
+          }}
+        }}
+
+        function _setProjectRunning(logId, running) {{
+          if (!logId) return;
+          if (running) {{
+            if (!_projectRunStartedMs[logId]) _projectRunStartedMs[logId] = Date.now();
+          }} else {{
+            delete _projectRunStartedMs[logId];
+          }}
+          refreshProjectStatsMetaOnly(logId);
         }}
 
         function showColumnDetails(projectLabel, columnName) {{
@@ -4039,22 +4122,23 @@ def index():
           if (!el) return;
           function renderCols(cols) {{
             if (!Array.isArray(cols) || !cols.length) {{
-              el.textContent = "No columns";
+              el.innerHTML = "No columns" + _statsMetaHtml(logId);
               return;
             }}
-            el.innerHTML = _renderGroupedStats(projectLabel, cols);
+            el.innerHTML = _renderGroupedStats(projectLabel, cols) + _statsMetaHtml(logId);
           }}
           fetch("/api/project-stats?project=" + encodeURIComponent(projectLabel))
             .then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status)); return j; }}); }})
             .then(function(data) {{
               if (!data || !data.ok) {{
-                el.textContent = "Stats unavailable";
+                el.innerHTML = "Stats unavailable" + _statsMetaHtml(logId);
                 return;
               }}
+              _statsLastRefreshMsByLog[logId] = Date.now();
               renderCols(Array.isArray(data.columns) ? data.columns : []);
             }})
             .catch(function() {{
-              el.textContent = "Stats unavailable";
+              el.innerHTML = "Stats unavailable" + _statsMetaHtml(logId);
             }});
         }}
 
@@ -4092,7 +4176,9 @@ def index():
               let line = data.line;
               if (folder && folder !== "all") {{
                 _appendProjectLog(folder, line, line.includes("Finished"));
+                if (line && line.includes("Running ")) _setProjectRunning(folder, true);
                 if(line.includes("Finished")) {{
+                  _setProjectRunning(folder, false);
                   var pu = (projectUnits || []).find(function(x) {{ return x.log_id === folder; }});
                   if (pu) refreshProjectStats(pu.log_id, pu.label);
                 }}
@@ -4292,6 +4378,7 @@ def index():
           }}
           var source = new EventSource(ep);
           projectStreams[logId] = source;
+          _setProjectRunning(logId, true);
           source.onmessage = function(e) {{
             try {{
               let data = JSON.parse(e.data);
@@ -4300,9 +4387,11 @@ def index():
               var targetLogId = data.folder || logId;
               _appendProjectLog(targetLogId, data.line, data.line.includes("Finished"));
               if(data.line.includes("Finished")) {{
+                _setProjectRunning(logId, false);
                 source.close();
                 delete projectStreams[logId];
                 buttons.forEach(function(b) {{ b.disabled = false; }});
+                refreshProjectStats(logId, projectLabel);
               }}
             }} catch(err) {{
               console.error("Project SSE parse error:", err);
@@ -4310,6 +4399,7 @@ def index():
           }};
           source.onerror = function(err) {{
             console.error("Project EventSource error:", err);
+            _setProjectRunning(logId, false);
             source.close();
             delete projectStreams[logId];
             buttons.forEach(function(b) {{ b.disabled = false; }});
@@ -4670,6 +4760,7 @@ def index():
           _setV("ed_display_name", s.display_name);
           _setV("ed_out_dir", s.out_dir);
           _setV("ed_start_file", s.start_file);
+          _setV("ed_templates_dir", s.templates_dir);
           _setV("ed_log_id", s.log_id);
           _setV("ed_prompts_dir", s.prompts_dir);
           _fillOrPlaceholder(s, kf, "wordpress_url", "ed_wordpress_url");
@@ -4715,7 +4806,7 @@ def index():
           var b = _siteEditorBase;
           if (!b) return null;
           var o = JSON.parse(JSON.stringify(b));
-          var sk = ["display_name","out_dir","start_file","log_id","prompts_dir","wordpress_url","wordpress_user","openai_model"];
+          var sk = ["display_name","out_dir","start_file","templates_dir","log_id","prompts_dir","wordpress_url","wordpress_user","openai_model"];
           sk.forEach(function(k) {{ var v = _getV("ed_" + k); if (v) o[k] = v; else if (b[k] !== undefined) o[k] = b[k]; }});
           var pass = _getV("ed_wordpress_app_password");
           if (pass) o.wordpress_app_password = pass;
@@ -4813,6 +4904,16 @@ def index():
         }}
         document.addEventListener("DOMContentLoaded", function() {{
           refreshAllProjectStats();
+          if (_statsTickerId) clearInterval(_statsTickerId);
+          _statsTickerId = setInterval(function() {{
+            (projectUnits || []).forEach(function(u) {{
+              refreshProjectStatsMetaOnly(u.log_id);
+            }});
+          }}, 1000);
+          if (_statsAutoRefreshId) clearInterval(_statsAutoRefreshId);
+          _statsAutoRefreshId = setInterval(function() {{
+            refreshAllProjectStats();
+          }}, STATS_REFRESH_MS);
           var fp = document.getElementById("siteEditorFormPane");
           if (fp) fp.addEventListener("input", function() {{ _siteEditorRawDirty = false; }}, true);
           var taR = document.getElementById("siteEditorRaw");
@@ -4962,6 +5063,7 @@ def index():
                         <div class="col-md-2 col-6"><label class="form-label">start_file</label><input id="ed_start_file" class="form-control form-control-sm" placeholder="xlsx" /></div>
                         <div class="col-md-2 col-6"><label class="form-label">log_id</label><input id="ed_log_id" class="form-control form-control-sm" /></div>
                         <div class="col-md-3 col-6"><label class="form-label">prompts_dir</label><input id="ed_prompts_dir" class="form-control form-control-sm" placeholder="config/site_prompts/…" /></div>
+                        <div class="col-md-3 col-6"><label class="form-label">templates_dir</label><input id="ed_templates_dir" class="form-control form-control-sm" placeholder="default: templates" /></div>
                       </div>
                     </div>
                     <div class="tab-pane fade" id="pane-se-wp" role="tabpanel" aria-labelledby="tab-se-wp">
