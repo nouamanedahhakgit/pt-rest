@@ -123,16 +123,122 @@
             <label class="form-check-label" for="nsp{{ i }}">no_shared_prompts (skip repo <code>config/prompts</code>)</label>
           </div>
 
-          <h6 class="text-secondary">Advanced JSON (per-site <code>settings</code> / <code>prompts</code>)</h6>
-          <p class="small text-muted">Leave empty to keep what is in the file now. To clear, put <code>{}</code> and save.</p>
-          <div class="mb-2">
-            <label class="form-label">settings JSON</label>
-            <textarea class="form-control json-area" rows="6" name="site_{{ i }}_settings_json">{{ site.get('_settings_json', '') }}</textarea>
-          </div>
-          <div class="mb-0">
-            <label class="form-label">prompts JSON (inline overrides by prompt name)</label>
-            <textarea class="form-control json-area" rows="8" name="site_{{ i }}_prompts_json">{{ site.get('_prompts_json', '') }}</textarea>
-          </div>
+          <h6 class="text-secondary">Settings Overrides (inputs)</h6>
+          <p class="small text-muted mb-2">Main values are shown as placeholders. Type only fields you want to override for this project.</p>
+          {% if settings_schema %}
+            {% set s_groups = settings_groups if settings_groups else {'All': settings_schema} %}
+            <ul class="nav nav-tabs mb-2" role="tablist">
+              {% for g_name, g_paths in s_groups.items() %}
+                <li class="nav-item" role="presentation">
+                  <button
+                    class="nav-link {% if loop.first %}active{% endif %}"
+                    id="site-{{ i }}-settings-tab-{{ loop.index0 }}"
+                    data-bs-toggle="tab"
+                    data-bs-target="#site-{{ i }}-settings-pane-{{ loop.index0 }}"
+                    type="button"
+                    role="tab"
+                    aria-controls="site-{{ i }}-settings-pane-{{ loop.index0 }}"
+                    aria-selected="{{ 'true' if loop.first else 'false' }}"
+                  >{{ g_name }}</button>
+                </li>
+              {% endfor %}
+            </ul>
+            <div class="tab-content border rounded p-2 mb-2">
+              {% for g_name, g_paths in s_groups.items() %}
+                <div
+                  class="tab-pane fade {% if loop.first %}show active{% endif %}"
+                  id="site-{{ i }}-settings-pane-{{ loop.index0 }}"
+                  role="tabpanel"
+                  aria-labelledby="site-{{ i }}-settings-tab-{{ loop.index0 }}"
+                >
+                  <div class="row g-2">
+                    {% for sp in g_paths %}
+                      {% set s_key = sp.replace('.', '__') %}
+                      {% set s_name = 'site_' ~ i ~ '_setting__' ~ s_key %}
+                      {% set s_id = 'set_' ~ i ~ '_' ~ s_key %}
+                      {% set s_val = site.get('_settings_values', {}).get(s_key, '') %}
+                      {% set s_ph = site.get('_settings_placeholders', {}).get(s_key, '') %}
+                      <div class="col-12">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                          <label class="form-label small mb-0" for="{{ s_id }}">{{ sp }}</label>
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary py-0 px-2"
+                            onclick="copyPromptField('{{ s_id }}', this)"
+                            title="Copy current override, or default placeholder"
+                          >Copy</button>
+                        </div>
+                        <input id="{{ s_id }}" class="form-control form-control-sm" name="{{ s_name }}" value="{{ s_val }}" placeholder="{{ s_ph }}" />
+                      </div>
+                    {% endfor %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="text-muted small mb-2">Settings schema not available.</p>
+          {% endif %}
+
+          <h6 class="text-secondary mt-3">Prompt Overrides (inputs)</h6>
+          <p class="small text-muted mb-2">Edit prompt fields directly per project. Empty input means no inline override for that field.</p>
+          {% if prompt_schema %}
+            <ul class="nav nav-tabs mb-2" role="tablist">
+              {% for pr_name, fields in prompt_schema.items() %}
+                <li class="nav-item" role="presentation">
+                  <button
+                    class="nav-link {% if loop.first %}active{% endif %}"
+                    id="site-{{ i }}-prompt-tab-{{ loop.index0 }}"
+                    data-bs-toggle="tab"
+                    data-bs-target="#site-{{ i }}-prompt-pane-{{ loop.index0 }}"
+                    type="button"
+                    role="tab"
+                    aria-controls="site-{{ i }}-prompt-pane-{{ loop.index0 }}"
+                    aria-selected="{{ 'true' if loop.first else 'false' }}"
+                  ><code>{{ pr_name }}</code></button>
+                </li>
+              {% endfor %}
+            </ul>
+            <div class="tab-content border rounded p-2 mb-2">
+              {% for pr_name, fields in prompt_schema.items() %}
+                <div
+                  class="tab-pane fade {% if loop.first %}show active{% endif %}"
+                  id="site-{{ i }}-prompt-pane-{{ loop.index0 }}"
+                  role="tabpanel"
+                  aria-labelledby="site-{{ i }}-prompt-tab-{{ loop.index0 }}"
+                >
+                  <div class="row g-2">
+                    {% for f in fields %}
+                      {% set path = f.get('path', '') %}
+                      {% set kind = f.get('kind', 'text') %}
+                      {% set fk = pr_name ~ '__' ~ path.replace('.', '__') %}
+                      {% set f_name = 'site_' ~ i ~ '_prompt__' ~ fk %}
+                      {% set f_id = 'fld_' ~ i ~ '_' ~ fk %}
+                      {% set v = site.get('_prompt_values', {}).get(fk, '') %}
+                      {% set ph = site.get('_prompt_placeholders', {}).get(fk, '') %}
+                      <div class="col-12">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                          <label class="form-label small mb-0" for="{{ f_id }}">{{ path }}</label>
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary py-0 px-2"
+                            onclick="copyPromptField('{{ f_id }}', this)"
+                            title="Copy current override, or default placeholder"
+                          >Copy</button>
+                        </div>
+                        {% if kind in ['textarea', 'json', 'lines'] %}
+                          <textarea id="{{ f_id }}" class="form-control form-control-sm json-area" rows="{{ 4 if kind == 'textarea' else 3 }}" name="{{ f_name }}" placeholder="{{ ph }}">{{ v }}</textarea>
+                        {% else %}
+                          <input id="{{ f_id }}" class="form-control form-control-sm" name="{{ f_name }}" value="{{ v }}" placeholder="{{ ph }}" />
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="text-muted small mb-0">Prompt field schema not available.</p>
+          {% endif %}
         </div>
       </div>
       {% else %}
@@ -154,5 +260,24 @@
     {% endfor %}
   </div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    function copyPromptField(fieldId, btn) {
+      var el = document.getElementById(fieldId);
+      if (!el) return;
+      var txt = "";
+      if (typeof el.value === "string" && el.value.trim() !== "") {
+        txt = el.value;
+      } else if (typeof el.placeholder === "string") {
+        txt = el.placeholder;
+      }
+      if (!txt) return;
+      navigator.clipboard.writeText(txt).then(function () {
+        if (!btn) return;
+        var old = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(function () { btn.textContent = old; }, 900);
+      }).catch(function () {});
+    }
+  </script>
 </body>
 </html>

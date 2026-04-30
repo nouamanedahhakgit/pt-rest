@@ -1525,8 +1525,64 @@ def _site_from_form(form, i: int, old: Optional[dict]) -> dict:
         s["no_shared_settings"] = True
     if form.get(p + "no_shared_prompts") == "1":
         s["no_shared_prompts"] = True
+    settings_field_prefix = p + "setting__"
+    has_settings_fields = False
+    settings_from_fields: dict = {}
+
+    def _coerce_field_value(raw: str):
+        txt = str(raw or "").strip()
+        if txt == "":
+            return None
+        if (txt.startswith("{") and txt.endswith("}")) or (txt.startswith("[") and txt.endswith("]")):
+            try:
+                return json.loads(txt)
+            except Exception:
+                return txt
+        lk = txt.lower()
+        if lk == "true":
+            return True
+        if lk == "false":
+            return False
+        if re.fullmatch(r"-?\d+", txt):
+            try:
+                return int(txt)
+            except Exception:
+                return txt
+        if re.fullmatch(r"-?\d+\.\d+", txt):
+            try:
+                return float(txt)
+            except Exception:
+                return txt
+        return txt
+
+    def _set_nested_value(dst: dict, path_parts: list, value):
+        cur = dst
+        for part in path_parts[:-1]:
+            node = cur.get(part)
+            if not isinstance(node, dict):
+                node = {}
+                cur[part] = node
+            cur = node
+        cur[path_parts[-1]] = value
+
+    for fk in form.keys():
+        if not str(fk).startswith(settings_field_prefix):
+            continue
+        has_settings_fields = True
+        payload = str(fk)[len(settings_field_prefix):]
+        bits = [b for b in payload.split("__") if b]
+        if not bits:
+            continue
+        vv = _coerce_field_value(form.get(fk))
+        if vv is None:
+            continue
+        _set_nested_value(settings_from_fields, bits, vv)
+
     t = (form.get(p + "settings_json") or "").strip()
-    if t:
+    if has_settings_fields:
+        if settings_from_fields:
+            s["settings"] = settings_from_fields
+    elif t:
         try:
             s["settings"] = json.loads(t)
         except json.JSONDecodeError as e:
@@ -1535,7 +1591,70 @@ def _site_from_form(form, i: int, old: Optional[dict]) -> dict:
         if "settings" in old:
             s["settings"] = old["settings"]
     t2 = (form.get(p + "prompts_json") or "").strip()
-    if t2:
+    prompt_field_prefix = p + "prompt__"
+    has_prompt_fields = False
+    prompts_from_fields: dict = {}
+
+    def _coerce_prompt_value(raw: str):
+        txt = str(raw or "").strip()
+        if txt == "":
+            return None
+        if (txt.startswith("{") and txt.endswith("}")) or (txt.startswith("[") and txt.endswith("]")):
+            try:
+                return json.loads(txt)
+            except Exception:
+                return txt
+        lk = txt.lower()
+        if lk == "true":
+            return True
+        if lk == "false":
+            return False
+        if re.fullmatch(r"-?\d+", txt):
+            try:
+                return int(txt)
+            except Exception:
+                return txt
+        if re.fullmatch(r"-?\d+\.\d+", txt):
+            try:
+                return float(txt)
+            except Exception:
+                return txt
+        return txt
+
+    def _set_nested_prompt(dst: dict, path_parts: list, value):
+        cur = dst
+        for part in path_parts[:-1]:
+            node = cur.get(part)
+            if not isinstance(node, dict):
+                node = {}
+                cur[part] = node
+            cur = node
+        cur[path_parts[-1]] = value
+
+    for fk in form.keys():
+        if not str(fk).startswith(prompt_field_prefix):
+            continue
+        has_prompt_fields = True
+        payload = str(fk)[len(prompt_field_prefix):]
+        bits = [b for b in payload.split("__") if b]
+        if len(bits) < 2:
+            continue
+        prompt_name = bits[0]
+        path_parts = bits[1:]
+        vv = _coerce_prompt_value(form.get(fk))
+        if vv is None:
+            continue
+        root = prompts_from_fields.get(prompt_name)
+        if not isinstance(root, dict):
+            root = {}
+            prompts_from_fields[prompt_name] = root
+        _set_nested_prompt(root, path_parts, vv)
+
+    if has_prompt_fields:
+        if prompts_from_fields:
+            s["prompts"] = prompts_from_fields
+        # If prompt fields are present but all empty, treat as clearing inline prompts.
+    elif t2:
         try:
             s["prompts"] = json.loads(t2)
         except json.JSONDecodeError as e:
@@ -2844,6 +2963,76 @@ def manage_sites():
     if not isinstance(d, dict) or "sites" not in d or not isinstance(d.get("sites"), list):
         d = {"pipeline_code_folder": "A1-Pinterest_01", "sites": []}
     d.setdefault("pipeline_code_folder", "A1-Pinterest_01")
+    prompt_schema: Dict[str, list] = {}
+    settings_schema: List[str] = []
+    settings_groups: Dict[str, List[str]] = {}
+    prompt_base_by_site_id: Dict[str, Dict[str, Any]] = {}
+    settings_base_by_site_id: Dict[str, Dict[str, Any]] = {}
+    try:
+        pipeline_folder = str(d.get("pipeline_code_folder") or "A1-Pinterest_01")
+        mod = _a1_config_module_for_pipeline_folder(pipeline_folder)
+        if mod is not None and hasattr(mod, "prompts_inline_field_schema"):
+            raw_schema = mod.prompts_inline_field_schema()
+            if isinstance(raw_schema, dict):
+                prompt_schema = raw_schema
+        if mod is not None and hasattr(mod, "resolved_runtime_snapshot"):
+            with _site_config_lock:
+                old_sid = os.environ.get("PINTEREST_SITE_ID")
+                try:
+                    for s in d.get("sites") or []:
+                        if not isinstance(s, dict):
+                            continue
+                        sid = str(s.get("id", "") or "").strip()
+                        if not sid:
+                            continue
+                        os.environ["PINTEREST_SITE_ID"] = sid
+                        try:
+                            snap = mod.resolved_runtime_snapshot()
+                        except Exception:
+                            continue
+                        base = (snap or {}).get("prompts_excluding_row_inline_by_path")
+                        if isinstance(base, dict):
+                            prompt_base_by_site_id[sid] = base
+                        raw_settings = (snap or {}).get("settings")
+                        if isinstance(raw_settings, dict):
+                            def _flatten_settings(din: Any, pref: str, out: Dict[str, Any]) -> None:
+                                if not isinstance(din, dict):
+                                    return
+                                for kk, vv in din.items():
+                                    sub = f"{pref}.{kk}" if pref else str(kk)
+                                    if isinstance(vv, dict):
+                                        # Keep simple mapping objects as one editable JSON field
+                                        # (e.g. category_id_mapping) instead of exploding to many inputs.
+                                        if vv and all(not isinstance(x, (dict, list)) for x in vv.values()):
+                                            out[sub] = vv
+                                        elif vv:
+                                            _flatten_settings(vv, sub, out)
+                                        else:
+                                            out[sub] = vv
+                                    else:
+                                        out[sub] = vv
+                            flat_settings: Dict[str, Any] = {}
+                            _flatten_settings(raw_settings, "", flat_settings)
+                            settings_base_by_site_id[sid] = flat_settings
+                            for kpath in flat_settings.keys():
+                                if kpath not in settings_schema:
+                                    settings_schema.append(kpath)
+                finally:
+                    if old_sid is not None:
+                        os.environ["PINTEREST_SITE_ID"] = old_sid
+                    else:
+                        os.environ.pop("PINTEREST_SITE_ID", None)
+    except Exception:
+        prompt_schema = {}
+
+    def _get_nested(obj: dict, path: str):
+        cur = obj
+        for pp in (path or "").split("."):
+            if not isinstance(cur, dict) or pp not in cur:
+                return None
+            cur = cur.get(pp)
+        return cur
+
     sites_view: List[dict] = []
     for s in d.get("sites") or []:
         if not isinstance(s, dict):
@@ -2857,12 +3046,118 @@ def manage_sites():
         sv["_prompts_json"] = (
             json.dumps(pr, ensure_ascii=False, indent=2) if isinstance(pr, (dict, list)) else ""
         )
+        prompt_values: Dict[str, str] = {}
+        prompt_placeholders: Dict[str, str] = {}
+        settings_values: Dict[str, str] = {}
+        settings_placeholders: Dict[str, str] = {}
+        sid = str(s.get("id", "") or "").strip()
+        base_for_site = prompt_base_by_site_id.get(sid, {})
+        settings_base_for_site = settings_base_by_site_id.get(sid, {})
+        site_settings = s.get("settings") if isinstance(s.get("settings"), dict) else {}
+
+        def _get_nested(obj: dict, path: str):
+            cur = obj
+            for pp in (path or "").split("."):
+                if not isinstance(cur, dict) or pp not in cur:
+                    return None
+                cur = cur.get(pp)
+            return cur
+
+        for sp in settings_schema:
+            vv = _get_nested(site_settings, sp) if isinstance(site_settings, dict) else None
+            if vv is not None:
+                if isinstance(vv, (dict, list)):
+                    settings_values[sp.replace(".", "__")] = json.dumps(vv, ensure_ascii=False)
+                else:
+                    settings_values[sp.replace(".", "__")] = str(vv)
+            bv = settings_base_for_site.get(sp)
+            if bv is not None:
+                if isinstance(bv, (dict, list)):
+                    settings_placeholders[sp.replace(".", "__")] = json.dumps(bv, ensure_ascii=False)
+                else:
+                    settings_placeholders[sp.replace(".", "__")] = str(bv)
+        if isinstance(pr, dict):
+            for pn, fields in prompt_schema.items():
+                if not isinstance(fields, list):
+                    continue
+                pnode = pr.get(pn)
+                if not isinstance(pnode, dict):
+                    continue
+                for f in fields:
+                    if not isinstance(f, dict):
+                        continue
+                    path = str(f.get("path") or "").strip()
+                    if not path:
+                        continue
+                    vv = _get_nested(pnode, path)
+                    if vv is None:
+                        continue
+                    key = f"{pn}__{path.replace('.', '__')}"
+                    if isinstance(vv, (dict, list)):
+                        prompt_values[key] = json.dumps(vv, ensure_ascii=False)
+                    else:
+                        prompt_values[key] = str(vv)
+        for pn, fields in prompt_schema.items():
+            if not isinstance(fields, list):
+                continue
+            flat_base = base_for_site.get(pn)
+            if not isinstance(flat_base, dict):
+                continue
+            for f in fields:
+                if not isinstance(f, dict):
+                    continue
+                path = str(f.get("path") or "").strip()
+                if not path:
+                    continue
+                bval = flat_base.get(path)
+                if bval is None:
+                    continue
+                key = f"{pn}__{path.replace('.', '__')}"
+                if isinstance(bval, (dict, list)):
+                    prompt_placeholders[key] = json.dumps(bval, ensure_ascii=False)
+                else:
+                    prompt_placeholders[key] = str(bval)
+        sv["_prompt_values"] = prompt_values
+        sv["_prompt_placeholders"] = prompt_placeholders
+        sv["_settings_values"] = settings_values
+        sv["_settings_placeholders"] = settings_placeholders
         sites_view.append(sv)
+
+    if settings_schema:
+        settings_groups = {
+            "General": [],
+            "A2": [],
+            "A3": [],
+            "A4": [],
+            "A5": [],
+            "A8": [],
+            "Other": [],
+        }
+        for sp in settings_schema:
+            lk = str(sp or "").lower()
+            if lk.startswith("a2_"):
+                settings_groups["A2"].append(sp)
+            elif lk.startswith("a3_"):
+                settings_groups["A3"].append(sp)
+            elif lk.startswith("a4_"):
+                settings_groups["A4"].append(sp)
+            elif lk.startswith("a5_"):
+                settings_groups["A5"].append(sp)
+            elif lk.startswith("a8_"):
+                settings_groups["A8"].append(sp)
+            elif "." in lk:
+                settings_groups["Other"].append(sp)
+            else:
+                settings_groups["General"].append(sp)
+        settings_groups = {k: v for k, v in settings_groups.items() if v}
     return render_template(
         "manage_sites.html",
         data=d,
         sites_view=sites_view,
         site_count=len(sites_view),
+        prompt_schema=prompt_schema,
+        settings_schema=settings_schema,
+        settings_groups=settings_groups,
     )
 
 

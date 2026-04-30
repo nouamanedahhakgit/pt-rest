@@ -249,6 +249,85 @@
         "a3_submit_spacing_seconds": 2.5,
         "a2_json_max_tokens": 1200,
         "a2_json_temperature": 0.2
+      },
+      "prompts": {
+        "a1_start": {
+          "repair_recipe": {
+            "system": "You are a strict recipe formatter. Do NOT change ingredients or instructions meaningfully. Only fix formatting and add missing metadata lines at the end. Calories MUST be present and should be clearly labeled as an estimate if uncertain.",
+            "user_template": "Here is a recipe text. Make it match EXACTLY this structure:\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ...\n\nInstructions:\n1. ...\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Keep Ingredients and Instructions the same (do not rewrite).\n- If any of Prep/Cook/Total/Course/Cuisine/Servings are missing, set them to N/A.\n- Calories MUST NOT be N/A. Provide an estimated calories number per serving, and write it like:\n  \"Calories: ~320 per serving\"\n- Output ONLY the recipe in that format. No markdown.\n\nRecipe Text:\n\"\"\"{recipe_text}\"\"\""
+          },
+          "generate_from_title": {
+            "system": "You are a professional recipe writer. Follow the exact format. Calories line is REQUIRED and should be an estimate if needed.",
+            "user_template": "Create ONE unique recipe for this title:\n{title}\n\nReturn ONLY this structure (no markdown, no extra text):\n\n<Recipe Title with TWO emojis>\n\nIngredients:\n- ingredient line\n- ingredient line\n\nInstructions:\n1. step\n2. step\n3. step\n...\n\nPrep Time: <value>\nCook Time: <value>\nTotal Time: <value>\nCourse: <value>\nCuisine: <value>\nServings: <value>\nCalories: <value>\n\nRules:\n- Ingredients must be bullet lines starting with \"- \".\n- Instructions must be numbered (6–11 steps).\n- Calories MUST be present. If you can't know exactly, estimate and use \"~\" like:\n  Calories: ~320 per serving"
+          }
+        },
+        "a2_json": {
+          "system": "You are a culinary data formatter. From a given recipe text, output a STRICT JSON object matching the required schema. Output JSON only (no markdown).",
+          "json_schema_block": "Return a STRICT JSON with exactly these keys: { ... }",
+          "preamble": "Recipe Title (clean, no emojis): ",
+          "recipe_wrap_prefix": "\n\nRecipe Text:\n\"\"\"",
+          "recipe_wrap_suffix": "\"\"\"\n\n"
+        },
+        "a2_prompt": {
+          "main_dish_system": "Return ONLY one Midjourney prompt in English (no labels, no markdown). Food-only scene.",
+          "main_dish_user_prefix": "Recipe: ",
+          "ingredient_extract_system": "From the recipe, extract ONLY the main ingredient NAMES in English as a comma-separated unique list.",
+          "ingredient_scene_template": "{ingredients_csv}, ingredients-only, top-down flat lay, clean spacing, neutral background, no text, no logos",
+          "allowed_food_style_fallback": "realistic, appetizing, food photography, no people, no text, no logos",
+          "food_only_guard": "food-only scene, exclude people/hands/faces/text/logos/packaging"
+        },
+        "a4_articles": {
+          "outline": {
+            "system": "You are a professional food blog writer. Write SEO-optimized outlines in {article_language}.",
+            "user": "Create a detailed SEO-optimized outline for a {total_words}-word recipe article.\n\n{card_context}\nRecipe:\n{recipe}"
+          },
+          "part1": {
+            "system": "Write long, SEO-friendly recipe articles in {article_language}.",
+            "user": "Write PART 1 of the article using this recipe and outline segment.\n\n{card_context}\nRecipe:\n{recipe_text}\n\nOutline Part 1:\n{outline_part}"
+          },
+          "part2": {
+            "system": "Continue the long SEO-friendly recipe article in {article_language}.",
+            "user": "Write PART 2 (continuation) from the outline segment.\n\n{card_context}\nRecipe:\n{recipe_text}\n\nOutline Part 2:\n{outline_part}"
+          }
+        },
+        "a5_pin_data": {
+          "recipe_title_pin": {
+            "system": "Write a short, catchy recipe title in {article_language}. Output title only."
+          },
+          "pinterest_title": {
+            "system": "Create Pinterest Pin titles in {article_language}. Output title only.",
+            "user": "Create a Pinterest Pin title for this Recipe:\n\n{recipe}"
+          },
+          "pinterest_keywords": {
+            "system": "Extract 6 relevant Pinterest keywords in {article_language}. Output comma-separated only."
+          },
+          "pinterest_description": {
+            "system": "Write Pinterest-friendly descriptions in {article_language}, 2-3 sentences, no hashtags/emojis.",
+            "user": "Using title and keywords, write a Pinterest description.\n\nTitle: {title}\nKeywords: {keywords}"
+          },
+          "focus_keyphrase": {
+            "system": "Generate one SEO focus keyphrase in {article_language}."
+          },
+          "meta_description": {
+            "system": "Create an SEO meta description in {article_language} including the focus keyphrase."
+          },
+          "keyphrase_synonyms": {
+            "system": "Provide synonyms for the focus keyphrase in {article_language}.",
+            "user": "3 Synonyms for the focus keyphrase: {focuskw}"
+          },
+          "categorize": {
+            "system": "Classify the recipe title into exactly one category: drinks, dessert, appetizers, dinner.",
+            "user": "Recipe title: {recipe}"
+          }
+        },
+        "a8_pin_bulk": {
+          "categorize_boards": {
+            "system": "Classify recipe/food text into exactly one Pinterest board from the list.",
+            "user_intro": "You are an assistant that categorizes food-related articles into one of the following Pinterest boards:\n",
+            "user_mid": ".\n\nAnalyze the following article and categorize it into one board.\n\n",
+            "user_suffix": "\n\nCategory:"
+          }
+        }
       }
     }
   ]
