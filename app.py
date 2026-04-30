@@ -3130,6 +3130,7 @@ def manage_sites():
             "A3": [],
             "A4": [],
             "A5": [],
+            "A6": [],
             "A8": [],
             "Other": [],
         }
@@ -3143,6 +3144,8 @@ def manage_sites():
                 settings_groups["A4"].append(sp)
             elif lk.startswith("a5_"):
                 settings_groups["A5"].append(sp)
+            elif lk.startswith("a6_"):
+                settings_groups["A6"].append(sp)
             elif lk.startswith("a8_"):
                 settings_groups["A8"].append(sp)
             elif "." in lk:

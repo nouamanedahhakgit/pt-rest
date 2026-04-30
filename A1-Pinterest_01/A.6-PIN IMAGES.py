@@ -123,6 +123,7 @@ def create_image(template_path, url_img1, url_img2, title_text,
 # MAIN
 if __name__ == "__main__":
     templates_dir = a1_config.resolve_templates_dir()
+    settings = a1_config.load_settings()
     output_dir = a1_config.all_output_join("output_images")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -152,6 +153,25 @@ if __name__ == "__main__":
             "stroke_opacity": 255
         },
     }
+
+    # Optional per-site override from settings:
+    # a6_template_fonts = { "1.png": "fonts/Other.ttf", "2.png": "fonts/Other2.otf" }
+    font_overrides = settings.get("a6_template_fonts") if isinstance(settings, dict) else None
+    if isinstance(font_overrides, dict):
+        for tpl_name, font_path in font_overrides.items():
+            nm = str(tpl_name or "").strip()
+            fp = str(font_path or "").strip()
+            if not nm or not fp:
+                continue
+            if nm not in template_config:
+                template_config[nm] = {
+                    "font_size": 65,
+                    "text_color_hex": "#FFFFFF",
+                    "stroke_color_hex": "#000000",
+                    "stroke_width": 3,
+                    "stroke_opacity": 255,
+                }
+            template_config[nm]["font_path"] = fp
 
     line_spacing = 17
     jpeg_quality = 70

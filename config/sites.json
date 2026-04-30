@@ -7,7 +7,14 @@
       "out_dir": "p11-out",
       "wordpress_url": "https://",
       "wordpress_user": "",
-      "wordpress_app_password": ""
+      "wordpress_app_password": "",
+      "settings": {
+        "a6_template_fonts": {
+          "1.png": "ALL/p11-out/templates/MyFont-Title.ttf",
+          "2.png": "ALL/p11-out/templates/MyFont-Recipe.otf",
+          "3.png": "ALL/p11-out/templates/MyFont-Alt.ttf"
+        }
+      }
     },
     {
       "id": "p12",

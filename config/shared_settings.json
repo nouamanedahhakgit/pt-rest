@@ -31,5 +31,10 @@
   ],
   "a3_submit_spacing_seconds": 2.5,
   "a2_json_max_tokens": 1200,
-  "a2_json_temperature": 0.2
+  "a2_json_temperature": 0.2,
+  "a6_template_fonts": {
+    "1.png": "fonts/CoffeeButter.ttf",
+    "2.png": "fonts/DkCanoodleRegular.otf",
+    "3.png": "fonts/CampingTrip.otf"
+  }
 }
