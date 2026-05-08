@@ -6,13 +6,11 @@
       "display_name": "New site (p11)",
       "out_dir": "p11-out",
       "wordpress_url": "https://",
-      "wordpress_user": "",
-      "wordpress_app_password": "",
       "settings": {
         "a6_template_fonts": {
-          "1.png": "ALL/p11-out/templates/MyFont-Title.ttf",
-          "2.png": "ALL/p11-out/templates/MyFont-Recipe.otf",
-          "3.png": "ALL/p11-out/templates/MyFont-Alt.ttf"
+          "1.png": "ALL/p11-out/templates/CoffeeButter.ttf",
+          "2.png": "ALL/p11-out/templates/CampingTrip.otf",
+          "3.png": "ALL/p11-out/templates/CoffeeButter.ttf"
         }
       }
     },
@@ -20,17 +18,13 @@
       "id": "p12",
       "display_name": "New site (p12)",
       "out_dir": "p12-out",
-      "wordpress_url": "https://",
-      "wordpress_user": "",
-      "wordpress_app_password": ""
+      "wordpress_url": "https://"
     },
     {
       "id": "p13",
       "display_name": "New site (p13)",
       "out_dir": "p13-out",
-      "wordpress_url": "https://",
-      "wordpress_user": "",
-      "wordpress_app_password": ""
+      "wordpress_url": "https://"
     }
   ]
 }

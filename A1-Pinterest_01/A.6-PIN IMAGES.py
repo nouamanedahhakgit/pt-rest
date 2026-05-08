@@ -11,6 +11,37 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 import a1_config  # noqa: E402
 
+def resolve_font_path(font_path: str, templates_dir: str) -> str:
+    """
+    Resolve user-provided font path robustly.
+    Supports:
+    - absolute path
+    - path relative to repo root (e.g. ALL/p11-out/templates/Font.ttf)
+    - path relative to templates_dir (e.g. fonts/Font.ttf or Font.ttf)
+    """
+    raw = str(font_path or "").strip()
+    if not raw:
+        return raw
+
+    if os.path.isabs(raw) and os.path.isfile(raw):
+        return raw
+
+    repo_rel = os.path.join(_REPO_ROOT, raw)
+    if os.path.isfile(repo_rel):
+        return repo_rel
+
+    tpl_rel = os.path.join(templates_dir, raw)
+    if os.path.isfile(tpl_rel):
+        return tpl_rel
+
+    # If user wrote templates/<file>, try basename under templates_dir too.
+    base_rel = os.path.join(templates_dir, os.path.basename(raw))
+    if os.path.isfile(base_rel):
+        return base_rel
+
+    # Keep original so existing error log still points to provided value.
+    return raw
+
 def wrap_text_by_width(draw, text, font, max_width):
     words = text.split()
     lines = []
@@ -171,7 +202,7 @@ if __name__ == "__main__":
                     "stroke_width": 3,
                     "stroke_opacity": 255,
                 }
-            template_config[nm]["font_path"] = fp
+            template_config[nm]["font_path"] = resolve_font_path(fp, templates_dir)
 
     line_spacing = 17
     jpeg_quality = 70

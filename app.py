@@ -371,7 +371,7 @@ _PROJECT_STATS_CACHE: dict = {}
 _GLOBAL_START_ROTATION = {"cursor": 0}
 
 
-def _total_titles_in_starts_cached(ttl_seconds: float = 10.0) -> int:
+def _total_titles_in_starts_cached(ttl_seconds: float = 180.0) -> int:
     now = time.time()
     at = float(_STARTS_TOTAL_CACHE.get("at", 0.0) or 0.0)
     if now - at <= ttl_seconds:
@@ -418,11 +418,9 @@ def _project_column_stats(project_label: str) -> dict:
     global_total = _total_titles_in_starts_cached()
     ck = str(project_label)
     cached = _PROJECT_STATS_CACHE.get(ck)
-    if (
-        isinstance(cached, dict)
-        and float(cached.get("mtime", -1.0)) == mtime
-        and (time.time() - float(cached.get("at", 0.0))) <= 8.0
-    ):
+    # Strong cache: if workbook file didn't change, reuse computed stats.
+    # Previous 8s TTL forced expensive re-scan loops even with unchanged files.
+    if isinstance(cached, dict) and float(cached.get("mtime", -1.0)) == mtime:
         return dict(cached.get("data") or {})
     try:
         wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
@@ -2137,6 +2135,54 @@ def generate_log_parallel(script_names, env_extra=None):
 
     yield "data: " + json.dumps({"folder": "all", "line": "Finished all processes."}) + "\n\n"
 
+
+def generate_log_sequential(script_names, env_extra=None, delay_between_jobs_s: float = 0.0):
+    """
+    Runs scripts one by one (strict sequence) and streams SSE log lines.
+    Optional delay_between_jobs_s is applied between finished job N and starting job N+1.
+    """
+    jobs = _normalize_script_jobs(script_names)
+    base_env = _subprocess_env(env_extra)
+
+    for idx, (folder, script, job_env, log_id, line_label) in enumerate(jobs, start=1):
+        folder_abs = os.path.join(os.getcwd(), folder)
+        script_path = os.path.join(folder_abs, script)
+        if not os.path.exists(script_path):
+            yield "data: " + json.dumps(
+                {"folder": log_id, "line": f"Script {line_label}/{script} not found (SKIPPED)."}
+            ) + "\n\n"
+            continue
+
+        be = {**base_env, **(job_env or {})}
+        yield "data: " + json.dumps(
+            {"folder": log_id, "line": f"Running {line_label}/{script}... [{idx}/{len(jobs)}]"}
+        ) + "\n\n"
+        proc = _popen_pipeline_script(folder_abs, script, be)
+        running_processes.append(proc)
+        for line in proc.stdout:
+            yield "data: " + json.dumps({"folder": log_id, "line": line.rstrip()}) + "\n\n"
+        proc.stdout.close()
+        proc.wait()
+        try:
+            running_processes.remove(proc)
+        except ValueError:
+            pass
+        yield "data: " + json.dumps(
+            {"folder": log_id, "line": f"Finished {line_label}/{script} (exit={proc.returncode})."}
+        ) + "\n\n"
+
+        if delay_between_jobs_s > 0 and idx < len(jobs):
+            wait_s = int(max(0, delay_between_jobs_s))
+            yield "data: " + json.dumps(
+                {
+                    "folder": log_id,
+                    "line": f"Safety wait: sleeping {wait_s}s before next job.",
+                }
+            ) + "\n\n"
+            time.sleep(wait_s)
+
+    yield "data: " + json.dumps({"folder": "all", "line": "Finished all processes."}) + "\n\n"
+
 def generate_log_imagine_all_grouped(env_extra=None):
     """
     Run A.3-IMAGINE.py for ALL projects in GROUPS:
@@ -2399,12 +2445,16 @@ def stream_all_prompt():
 
 @app.route("/stream-all-json")
 def stream_all_json():
-    scripts_to_run = jobs_for_script("A.2-JSON.py")
+    scripts_to_run = _filter_jobs_missing_step(jobs_for_script("A.2-JSON.py"), "JSON")
 
     # باش نعطيك Done X/Y
     total = len(scripts_to_run)
 
     def gen():
+        if total <= 0:
+            yield "data: " + json.dumps({"folder": "all", "line": "JSON already complete for all projects. Nothing to run."}) + "\n\n"
+            yield "data: " + json.dumps({"folder": "all", "line": "Finished all processes."}) + "\n\n"
+            return
         done = 0
         for chunk in generate_log_in_batches(scripts_to_run, batch_size=5):
             # chunk = "data: {...}\n\n" أو "data: {...}\n\n"
@@ -2651,6 +2701,87 @@ def stream_all_pin_bulk():
     )
 
 
+@app.route("/stream-all-auto-safe")
+def stream_all_auto_safe():
+    """
+    Full automatic pipeline with strict step-by-step order.
+    Image step is safety-throttled: 120s delay between projects to reduce ban risk.
+    """
+    @stream_with_context
+    def stream():
+        plan = [
+            ("START", jobs_for_start1_all_except_s2(), {"kind": "parallel", "env_extra": None, "check_step": None}),
+            ("JSON", jobs_for_script("A.2-JSON.py"), {"kind": "pool", "max_concurrency": 10, "check_step": "JSON"}),
+            ("PROMPT", jobs_for_script("A.2-PROMPT.py"), {"kind": "parallel", "env_extra": None, "check_step": "PROMPT"}),
+            ("IMAGINE ALL", jobs_for_script("A.3-IMAGINE.py"), {"kind": "parallel", "env_extra": None, "check_step": "IMAGINE"}),
+            ("ARTICLE", jobs_for_script("A.4-ARTICLES.py"), {"kind": "pool", "max_concurrency": 10, "check_step": "ARTICLE"}),
+            ("PIN DATA", jobs_for_script("A.5-PIN DATA.py"), {"kind": "pool", "max_concurrency": 10, "env_extra": {"PIN_SKIP_EXISTING": "1"}, "check_step": "PIN DATA"}),
+            ("PIN IMAGE", jobs_for_script("A.6-PIN IMAGES.py"), {"kind": "sequential", "delay_s": 120, "check_step": "PIN IMAGE"}),
+            ("WP UPLOAD", jobs_for_script("A.7-WP UPLOAD.py"), {"kind": "pool", "max_concurrency": 10, "check_step": "WP UPLOAD"}),
+            ("PIN BULK", jobs_for_script("A.8-PIN BULK.py"), {"kind": "parallel", "env_extra": None, "check_step": "PIN DATA"}),
+        ]
+
+        yield "data: " + json.dumps(
+            {"folder": "all", "line": "🚀 AUTO SAFE pipeline started (step-by-step)."}
+        ) + "\n\n"
+        yield "data: " + json.dumps(
+            {"folder": "all", "line": "🛡️ PIN IMAGE safety mode: 120s delay between projects."}
+        ) + "\n\n"
+
+        for step_name, jobs, opts in plan:
+            step_jobs = jobs
+            check_step = opts.get("check_step")
+            if check_step:
+                step_jobs = _filter_jobs_missing_step(step_jobs, str(check_step))
+            yield "data: " + json.dumps(
+                {"folder": "all", "line": f"▶ Starting step: {step_name}"}
+            ) + "\n\n"
+            if not step_jobs:
+                yield "data: " + json.dumps(
+                    {"folder": "all", "line": f"⏭ Step {step_name}: already complete for all projects, skipping."}
+                ) + "\n\n"
+                continue
+
+            kind = opts.get("kind")
+            if kind == "pool":
+                gen = generate_log_pool(
+                    step_jobs,
+                    max_concurrency=int(opts.get("max_concurrency", 10)),
+                    env_extra=opts.get("env_extra"),
+                )
+            elif kind == "sequential":
+                gen = generate_log_sequential(
+                    step_jobs,
+                    env_extra=opts.get("env_extra"),
+                    delay_between_jobs_s=float(opts.get("delay_s", 0)),
+                )
+            else:
+                gen = generate_log_parallel(step_jobs, env_extra=opts.get("env_extra"))
+
+            for line in gen:
+                if '"folder": "all"' in line and "Finished all processes." in line:
+                    continue
+                yield line
+
+            yield "data: " + json.dumps(
+                {"folder": "all", "line": f"✅ Finished step: {step_name}"}
+            ) + "\n\n"
+
+        yield "data: " + json.dumps(
+            {"folder": "all", "line": "🎉 AUTO SAFE pipeline finished."}
+        ) + "\n\n"
+        yield 'data: {"folder":"all","line":"Finished all processes."}\n\n'
+
+    return Response(
+        stream(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # -------------------- Stream Endpoint for START2 --------------------
 @app.route("/stream_start2")
 def stream_start2():
@@ -2865,6 +2996,232 @@ def api_projects_stats():
         s["log_id"] = log_id
         items.append(s)
     return jsonify({"ok": True, "items": items})
+
+
+_STEP_CLEAR_ORDER = [
+    "START",
+    "JSON",
+    "PROMPT",
+    "IMAGINE",
+    "ARTICLE",
+    "PIN DATA",
+    "PIN IMAGE",
+    "WP UPLOAD",
+    "PIN BULK",
+]
+
+_STEP_CLEAR_COLUMNS = {
+    "START": ["Title", "Recipe", "Generated At"],
+    "JSON": ["Json Recipe"],
+    "PROMPT": ["Prompt", "Prompt Image Ingredients"],
+    "IMAGINE": [
+        "main_image", "image_1", "image_2", "image_3", "image_4",
+        "statu", "error",
+        "main_image_ingredients", "image_ing_1", "image_ing_2", "image_ing_3", "image_ing_4",
+        "statu_ing",
+    ],
+    "ARTICLE": ["article"],
+    "PIN DATA": [
+        "recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords",
+        "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms",
+        "categories",
+    ],
+    "PIN IMAGE": ["pinterest_image"],
+    "WP UPLOAD": ["output_name"],
+    # Keep PIN BULK aligned with pin metadata columns.
+    "PIN BULK": [
+        "recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords",
+        "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms",
+        "categories",
+    ],
+}
+
+
+def _normalize_step_name(step: str) -> str:
+    return str(step or "").strip().upper()
+
+
+def _cascade_steps_from(step: str) -> list:
+    s = _normalize_step_name(step)
+    try:
+        idx = _STEP_CLEAR_ORDER.index(s)
+    except ValueError:
+        return []
+    return _STEP_CLEAR_ORDER[idx:]
+
+
+def _step_name_for_column_py(name: str) -> str:
+    lk = str(name or "").strip().lower()
+    if lk in {"title", "recipe", "generated at"}:
+        return "START"
+    if lk in {"json recipe"}:
+        return "JSON"
+    if lk in {"prompt", "prompt image ingredients"}:
+        return "PROMPT"
+    if lk in {
+        "main_image", "image_1", "image_2", "image_3", "image_4", "statu", "error",
+        "main_image_ingredients", "image_ing_1", "image_ing_2", "image_ing_3", "image_ing_4", "statu_ing",
+    }:
+        return "IMAGINE"
+    if lk in {"article"}:
+        return "ARTICLE"
+    if lk in {
+        "recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords",
+        "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms", "categories",
+    }:
+        return "PIN DATA"
+    if lk in {"pinterest_image"}:
+        return "PIN IMAGE"
+    if lk in {"output_name"}:
+        return "WP UPLOAD"
+    return "OTHER"
+
+
+def _project_step_complete(project_label: str, step_name: str) -> bool:
+    """
+    True if all columns belonging to step_name are fully filled for this project.
+    """
+    step = _normalize_step_name(step_name)
+    s = _project_column_stats(project_label)
+    if not isinstance(s, dict) or not s.get("ok"):
+        return False
+    cols = s.get("columns") or []
+    if not isinstance(cols, list) or not cols:
+        return False
+    step_cols = [c for c in cols if _step_name_for_column_py((c or {}).get("name", "")) == step]
+    if not step_cols:
+        return False
+    for c in step_cols:
+        filled = int((c or {}).get("filled", 0) or 0)
+        total = int((c or {}).get("total", 0) or 0)
+        if total > 0 and filled < total:
+            return False
+    return True
+
+
+def _filter_jobs_missing_step(script_jobs: list, step_name: str) -> list:
+    """
+    Keep only jobs for projects where the given step is NOT complete yet.
+    """
+    out = []
+    skipped = 0
+    for item in _normalize_script_jobs(script_jobs):
+        folder, script, env, log_id, line_label = item
+        label = str(line_label or "")
+        if _project_step_complete(label, step_name):
+            skipped += 1
+            continue
+        out.append((folder, script, env, log_id, line_label))
+    return out
+
+
+def _clear_steps_in_project_excel(file_path: str, steps_to_clear: list) -> dict:
+    wb = openpyxl.load_workbook(file_path)
+    sh = wb.active
+    max_col = int(sh.max_column or 0)
+    max_row = int(sh.max_row or 0)
+    if max_col <= 0 or max_row <= 1:
+        return {"cleared_cells": 0, "columns_found": [], "columns_missing": []}
+
+    header_values = next(
+        sh.iter_rows(min_row=1, max_row=1, min_col=1, max_col=max_col, values_only=True),
+        tuple(),
+    )
+    by_lower = {}
+    for i in range(max_col):
+        hv = header_values[i] if i < len(header_values) else None
+        h = str(hv).strip() if hv is not None else ""
+        if h:
+            by_lower[h.lower()] = i + 1  # 1-based column index
+
+    target_names = []
+    for step in steps_to_clear:
+        target_names.extend(_STEP_CLEAR_COLUMNS.get(step, []))
+    # preserve order + dedupe
+    seen = set()
+    ordered_names = []
+    for n in target_names:
+        lk = str(n).strip().lower()
+        if lk in seen:
+            continue
+        seen.add(lk)
+        ordered_names.append(n)
+
+    found_cols = []
+    missing_cols = []
+    found_idxs = []
+    for name in ordered_names:
+        lk = str(name).strip().lower()
+        idx = by_lower.get(lk)
+        if idx is None:
+            missing_cols.append(name)
+            continue
+        found_cols.append(name)
+        found_idxs.append(idx)
+
+    cleared = 0
+    if found_idxs:
+        for r in range(2, max_row + 1):
+            for cidx in found_idxs:
+                cell = sh.cell(row=r, column=cidx)
+                if cell.value is not None and str(cell.value) != "":
+                    cleared += 1
+                cell.value = None
+        wb.save(file_path)
+    wb.close()
+    return {
+        "cleared_cells": int(cleared),
+        "columns_found": found_cols,
+        "columns_missing": missing_cols,
+    }
+
+
+@app.route("/api/clear-step", methods=["POST"])
+def api_clear_step():
+    payload = request.get_json(silent=True) or {}
+    step = _normalize_step_name(payload.get("step", ""))
+    if not step:
+        return jsonify({"ok": False, "error": "Missing step"}), 400
+    steps_to_clear = _cascade_steps_from(step)
+    if not steps_to_clear:
+        return jsonify({"ok": False, "error": "Unknown step", "allowed_steps": _STEP_CLEAR_ORDER}), 400
+
+    per_project = []
+    total_cleared = 0
+    for project in flat_ui_labels():
+        out_dir = all_out_name_for_label(project)
+        file_path = _project_excel_path_by_out_dir(out_dir)
+        if not os.path.exists(file_path):
+            per_project.append(
+                {"project": project, "ok": False, "error": "file_not_found", "file_path": file_path}
+            )
+            continue
+        try:
+            result = _clear_steps_in_project_excel(file_path, steps_to_clear)
+            total_cleared += int(result.get("cleared_cells", 0) or 0)
+            per_project.append(
+                {
+                    "project": project,
+                    "ok": True,
+                    "file_path": file_path,
+                    **result,
+                }
+            )
+        except Exception as e:
+            per_project.append(
+                {"project": project, "ok": False, "error": str(e), "file_path": file_path}
+            )
+
+    _PROJECT_STATS_CACHE.clear()
+    return jsonify(
+        {
+            "ok": True,
+            "step": step,
+            "cascade_steps": steps_to_clear,
+            "total_cleared_cells": int(total_cleared),
+            "projects": per_project,
+        }
+    )
 
 
 @app.route("/api/project-column-details")
@@ -3202,15 +3559,66 @@ def stop_scripts():
 # -------------------- 3) Delete 'ALL' Folder --------------------
 @app.route("/delete-all-folder", methods=["POST"])
 def delete_all_folder():
-    folder_path = os.path.join(os.getcwd(), "ALL")
-    if os.path.exists(folder_path):
+    """
+    Clear rows inside project Recipes.xlsx files (row 2..end), keep headers.
+    Safer than deleting the ALL folder.
+    """
+    results = []
+    total_cleared = 0
+    any_found = False
+
+    protected_start_cols = {"title", "recipe", "generated at"}
+
+    for label in flat_ui_labels():
+        out_dir = all_out_name_for_label(label)
+        file_path = _project_excel_path_by_out_dir(out_dir)
+        if not os.path.exists(file_path):
+            results.append((label, "missing", 0, file_path))
+            continue
+        any_found = True
         try:
-            shutil.rmtree(folder_path)
-            return "<h1>'ALL' folder deleted successfully.</h1><a href='/'>Back</a>"
+            wb = openpyxl.load_workbook(file_path)
+            sh = wb.active
+            max_row = int(sh.max_row or 1)
+            max_col = int(sh.max_column or 1)
+            header_values = next(
+                sh.iter_rows(min_row=1, max_row=1, min_col=1, max_col=max_col, values_only=True),
+                tuple(),
+            )
+            clear_col_idxs = []
+            for c in range(1, max_col + 1):
+                hv = header_values[c - 1] if c - 1 < len(header_values) else None
+                h = str(hv).strip().lower() if hv is not None else ""
+                if h in protected_start_cols:
+                    continue
+                clear_col_idxs.append(c)
+            cleared_rows = 0
+            if max_row >= 2:
+                for r in range(2, max_row + 1):
+                    for c in clear_col_idxs:
+                        sh.cell(row=r, column=c, value=None)
+                    cleared_rows += 1
+            wb.save(file_path)
+            wb.close()
+            total_cleared += int(cleared_rows)
+            results.append((label, "ok", int(cleared_rows), file_path))
         except Exception as e:
-            return f"<h1>Error deleting folder: {e}</h1><a href='/'>Back</a>"
-    else:
-        return "<h1>'ALL' folder not found.</h1><a href='/'>Back</a>"
+            results.append((label, f"error: {e}", 0, file_path))
+
+    _PROJECT_STATS_CACHE.clear()
+
+    if not any_found:
+        return "<h1>No Recipes.xlsx files found for projects.</h1><a href='/'>Back</a>"
+
+    lines = [f"<h1>Cleared rows in Recipes.xlsx files. Total rows cleared: {total_cleared}</h1>"]
+    lines.append("<ul>")
+    for label, status, rows, fp in results:
+        lines.append(
+            f"<li><strong>{label}</strong>: {status} | cleared_rows={rows}<br><code>{fp}</code></li>"
+        )
+    lines.append("</ul>")
+    lines.append("<a href='/'>Back</a>")
+    return "".join(lines)
 
 
 # ------------------------------------------------------------------
@@ -3990,15 +4398,15 @@ def index():
               </div>
               <div class="card-body overflow-auto" style="height:200px;" id="log_{lid}"></div>
               <div class="card-footer">
-                <button class="btn btn-sm btn-primary project-action" onclick='startProjectAction({lidj}, {titlej}, "start", this)'>START</button>
-                <button class="btn btn-sm btn-secondary project-action" onclick='startProjectAction({lidj}, {titlej}, "json", this)'>JSON</button>
-                <button class="btn btn-sm btn-warning project-action" onclick='startProjectAction({lidj}, {titlej}, "prompt", this)'>PROMPT</button>
-                <button class="btn btn-sm btn-info project-action" onclick='startProjectAction({lidj}, {titlej}, "imagine", this)'>IMAGINE</button>
-                <button class="btn btn-sm btn-success project-action" onclick='startProjectAction({lidj}, {titlej}, "article", this)'>ARTICLE</button>
-                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_data", this)'>PIN DATA</button>
-                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_image", this)'>PIN IMAGE</button>
-                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
-                <button class="btn btn-sm btn-dark project-action" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
+                <button class="btn btn-sm btn-primary project-action" data-action="start" onclick='startProjectAction({lidj}, {titlej}, "start", this)'>START</button>
+                <button class="btn btn-sm btn-secondary project-action" data-action="json" onclick='startProjectAction({lidj}, {titlej}, "json", this)'>JSON</button>
+                <button class="btn btn-sm btn-warning project-action" data-action="prompt" onclick='startProjectAction({lidj}, {titlej}, "prompt", this)'>PROMPT</button>
+                <button class="btn btn-sm btn-info project-action" data-action="imagine" onclick='startProjectAction({lidj}, {titlej}, "imagine", this)'>IMAGINE</button>
+                <button class="btn btn-sm btn-success project-action" data-action="article" onclick='startProjectAction({lidj}, {titlej}, "article", this)'>ARTICLE</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_data" onclick='startProjectAction({lidj}, {titlej}, "pin_data", this)'>PIN DATA</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_image" onclick='startProjectAction({lidj}, {titlej}, "pin_image", this)'>PIN IMAGE</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="wp_upload" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_bulk" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
                 <button class="btn btn-sm btn-outline-danger" onclick='clearProjectLog({lidj})'>CLEAR LOG</button>
               </div>
             </div>
@@ -4107,6 +4515,27 @@ def index():
         .number-button:hover {{ background-color: #5b51db; }}
         .number-button.active {{ background-color: yellow; color: #000; }}
         .number-button.finished {{ background-color: #28c76f; }}
+        .number-button.partial {{ background-color: #ff9f43; color: #fff; }}
+        @keyframes runningGlowPulse {{
+          0% {{ box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.65); filter: brightness(1); }}
+          50% {{ box-shadow: 0 0 0 8px rgba(255, 193, 7, 0.10); filter: brightness(1.08); }}
+          100% {{ box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.00); filter: brightness(1); }}
+        }}
+        .running-glow {{
+          animation: runningGlowPulse 1.2s ease-in-out infinite;
+          border-color: #ffc107 !important;
+        }}
+        .step-clear-button {{
+          margin-left: 6px;
+          padding: 7px 10px;
+          border-radius: 8px;
+          border: 1px solid #d9534f;
+          background: #fff5f5;
+          color: #b42318;
+          font-weight: 700;
+          cursor: pointer;
+        }}
+        .step-clear-button:hover {{ background: #ffe3e3; }}
         #previewTable td {{ padding: 5px; vertical-align: middle; }}
         #previewTable button {{ margin-left: 10px; }}
         #siteConfigModal .modal-dialog {{ max-width: min(1140px, 96vw); margin-left: auto; margin-right: auto; }}
@@ -4216,6 +4645,12 @@ def index():
           try {{ localStorage.removeItem(_logStorageKey(logId)); }} catch (e) {{}}
         }}
 
+        function clearAllLogs() {{
+          (projectFolders || []).forEach(function(logId) {{
+            clearProjectLog(logId);
+          }});
+        }}
+
         function _restoreProjectLogsFromStorage() {{
           (projectFolders || []).forEach(function(logId) {{
             var v = "";
@@ -4265,6 +4700,33 @@ def index():
           return String(min) + "m " + String(rem) + "s ago";
         }}
 
+        function requestBrowserNotifyPermission() {{
+          if (!("Notification" in window)) return;
+          try {{
+            if (Notification.permission === "default") {{
+              Notification.requestPermission().catch(function() {{}});
+            }}
+          }} catch (e) {{
+            console.warn("Notification permission request failed:", e);
+          }}
+        }}
+
+        function notifyTaskFinished(title, body) {{
+          if (!("Notification" in window)) return;
+          if (Notification.permission !== "granted") return;
+          try {{
+            var n = new Notification(String(title || "Task finished"), {{
+              body: String(body || ""),
+              tag: "pinterest-automation-finish"
+            }});
+            setTimeout(function() {{
+              try {{ n.close(); }} catch (e) {{}}
+            }}, 9000);
+          }} catch (e) {{
+            console.warn("Notification failed:", e);
+          }}
+        }}
+
         function _isProjectRunning(logId) {{
           return !!_projectRunStartedMs[logId];
         }}
@@ -4301,6 +4763,73 @@ def index():
             delete _projectRunStartedMs[logId];
           }}
           refreshProjectStatsMetaOnly(logId);
+        }}
+
+        function _scriptToAction(scriptName) {{
+          var s = String(scriptName || "").trim();
+          var map = {{
+            "A.1-START.py": "start",
+            "A.2-JSON.py": "json",
+            "A.2-PROMPT.py": "prompt",
+            "A.3-IMAGINE.py": "imagine",
+            "A.4-ARTICLES.py": "article",
+            "A.5-PIN DATA.py": "pin_data",
+            "A.6-PIN IMAGES.py": "pin_image",
+            "A.7-WP UPLOAD.py": "wp_upload",
+            "A.8-PIN BULK.py": "pin_bulk"
+          }};
+          return map[s] || "";
+        }}
+
+        function _setBulkStepGlow(stepName, running) {{
+          var step = String(stepName || "");
+          if (!step) return;
+          var btns = document.querySelectorAll('.number-button[data-step="' + step + '"]');
+          btns.forEach(function(btn) {{
+            if (running) btn.classList.add("running-glow");
+            else btn.classList.remove("running-glow");
+          }});
+        }}
+
+        function _clearAllBulkGlow() {{
+          var btns = document.querySelectorAll(".number-button.running-glow");
+          btns.forEach(function(btn) {{ btn.classList.remove("running-glow"); }});
+        }}
+
+        function _bulkStepFromEndpoint(endpoint) {{
+          var ep = String(endpoint || "");
+          var map = {{
+            "/stream-all-start": "START",
+            "/stream-all-json": "JSON",
+            "/stream-all-prompt": "PROMPT",
+            "/stream-imagine-all": "IMAGINE",
+            "/stream-all-article": "ARTICLE",
+            "/stream-all-pin-data": "PIN DATA",
+            "/stream-all-pin-image": "PIN IMAGE",
+            "/stream-all-wp-upload": "WP UPLOAD",
+            "/stream-all-pin-bulk": "PIN DATA",
+            "/stream-all-auto-safe": "START"
+          }};
+          return map[ep] || "";
+        }}
+
+        function _bulkStepFromLogLine(line) {{
+          var txt = String(line || "");
+          var m = txt.match(/\/(A\.\d-[^ ]+\.py)/);
+          if (!m) return "";
+          var action = _scriptToAction(m[1]);
+          var byAction = {{
+            "start": "START",
+            "json": "JSON",
+            "prompt": "PROMPT",
+            "imagine": "IMAGINE",
+            "article": "ARTICLE",
+            "pin_data": "PIN DATA",
+            "pin_image": "PIN IMAGE",
+            "wp_upload": "WP UPLOAD",
+            "pin_bulk": "PIN DATA"
+          }};
+          return byAction[action] || "";
         }}
 
         function showColumnDetails(projectLabel, columnName) {{
@@ -4369,16 +4898,24 @@ def index():
           return "OTHER";
         }}
 
+        function _isReverseStatusColumn(name) {{
+          var lk = String(name || "").trim().toLowerCase();
+          // Reverse semantics: empty means success, filled means problem.
+          return lk === "error" || lk === "error_ing";
+        }}
+
         function _renderStatChip(projectLabel, c) {{
           var filled = Number(c.filled || 0);
           var total = Number(c.total || 0);
           var name = String(c.name || "");
+          var reverse = _isReverseStatusColumn(name);
+          var effFilled = reverse ? Math.max(0, total - filled) : filled;
           var projEnc = encodeURIComponent(String(projectLabel || ""));
           var nameEnc = encodeURIComponent(name);
           var klass = "stat-chip-neutral";
           var icon = "bx-minus-circle";
           if (total > 0) {{
-            if (filled >= total) {{
+            if (effFilled >= total) {{
               klass = "stat-chip-good";
               icon = "bx-check-circle";
             }} else {{
@@ -4386,11 +4923,14 @@ def index():
               icon = "bx-x-circle";
             }}
           }}
+          var shownCount = reverse
+            ? (String(Math.max(0, total - filled)) + "/" + String(total))
+            : (String(filled) + "/" + String(total));
           return ""
             + "<span class='stat-chip " + klass + "' data-st-pe='" + projEnc + "' data-st-ce='" + nameEnc
-            + "' title='" + _escapeHtml(name + ": " + filled + "/" + total).replace(/'/g, "&#39;") + "'>"
+            + "' title='" + _escapeHtml(name + ": " + shownCount).replace(/'/g, "&#39;") + "'>"
             + "<i class='bx " + icon + "'></i>"
-            + "<span class='stat-chip-count'>" + _escapeHtml(String(filled) + "/" + String(total)) + "</span>"
+            + "<span class='stat-chip-count'>" + _escapeHtml(shownCount) + "</span>"
             + "<span class='stat-chip-name'>" + _escapeHtml(name) + "</span>"
             + "<i class='bx bx-expand-alt stat-chip-open' role='button' tabindex='0' title='Show details'></i>"
             + "</span>";
@@ -4413,6 +4953,135 @@ def index():
             html.push("<div class='stat-step-group'><span class='stat-step-title'>" + _escapeHtml(step) + ":</span>" + chips + "</div>");
           }});
           return html.join("");
+        }}
+
+        function _stepProgressForProject(statsItem, step) {{
+          if (!statsItem || !statsItem.ok) return {{ filled: 0, total: 0 }};
+          var cols = Array.isArray(statsItem.columns) ? statsItem.columns : [];
+          if (!cols.length) return {{ filled: 0, total: 0 }};
+          var grouped = _columnsByStep(cols);
+          var arr = grouped[step] || [];
+          if (!arr.length) return {{ filled: 0, total: 0 }};
+          var filled = 0;
+          var total = 0;
+          arr.forEach(function(c) {{
+            if (_isReverseStatusColumn(c && c.name)) {{
+              // Do not count error columns in step completion color.
+              return;
+            }}
+            var cf = Number(c && c.filled || 0);
+            var ct = Number(c && c.total || 0);
+            filled += cf;
+            total += ct;
+          }});
+          return {{ filled: filled, total: total }};
+        }}
+
+        function _setStepButtonState(step, state) {{
+          var btns = document.querySelectorAll('.number-button[data-step="' + step + '"]');
+          btns.forEach(function(btn) {{
+            if (btn.classList.contains("active")) return;
+            btn.classList.remove("finished", "partial");
+            if (state === "done") {{
+              btn.classList.add("finished");
+            }} else if (state === "partial") {{
+              btn.classList.add("partial");
+            }}
+          }});
+        }}
+
+        function refreshActionButtonStates() {{
+          fetch("/api/projects-stats")
+            .then(function(r) {{
+              return r.json().then(function(j) {{
+                if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status));
+                return j;
+              }});
+            }})
+            .then(function(payload) {{
+              var items = Array.isArray(payload && payload.items) ? payload.items : [];
+              var steps = ["START", "JSON", "PROMPT", "IMAGINE", "ARTICLE", "PIN DATA", "PIN IMAGE", "WP UPLOAD"];
+              steps.forEach(function(step) {{
+                var sumFilled = 0;
+                var sumTotal = 0;
+                var hasPartial = false;
+                items.forEach(function(it) {{
+                  var p = _stepProgressForProject(it, step);
+                  sumFilled += p.filled;
+                  sumTotal += p.total;
+                  if (p.filled > 0) hasPartial = true;
+                }});
+                if (sumTotal > 0 && sumFilled >= sumTotal) {{
+                  _setStepButtonState(step, "done");
+                }} else if (hasPartial) {{
+                  _setStepButtonState(step, "partial");
+                }} else {{
+                  _setStepButtonState(step, "none");
+                }}
+              }});
+            }})
+            .catch(function(err) {{
+              console.warn("Could not refresh action button states:", err);
+            }});
+        }}
+
+        function _clearCascadeFrom(step) {{
+          var order = ["START", "JSON", "PROMPT", "IMAGINE", "ARTICLE", "PIN DATA", "PIN IMAGE", "WP UPLOAD", "PIN BULK"];
+          var s = String(step || "").trim().toUpperCase();
+          var idx = order.indexOf(s);
+          if (idx < 0) return [];
+          return order.slice(idx);
+        }}
+
+        function clearStepAction(step) {{
+          var s = String(step || "").trim().toUpperCase();
+          if (!s) return;
+          var cascade = _clearCascadeFrom(s);
+          if (!cascade.length) {{
+            alert("Unknown step: " + s);
+            return;
+          }}
+          var msg = [
+            "WARNING: You are about to clear step data.",
+            "",
+            "Selected step: " + s,
+            "This will also clear dependent next steps:",
+            "  " + cascade.join("  ->  "),
+            "",
+            "This action will run for ALL projects and cannot be undone.",
+            "Do you want to continue?"
+          ].join("\\n");
+          if (!window.confirm(msg)) return;
+
+          fetch("/api/clear-step", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ step: s }})
+          }})
+          .then(function(r) {{
+            return r.json().then(function(j) {{
+              if (!r.ok) throw new Error((j && (j.error || j.message)) || ("HTTP " + r.status));
+              return j;
+            }});
+          }})
+          .then(function(data) {{
+            var rows = Array.isArray(data.projects) ? data.projects : [];
+            var okCount = rows.filter(function(x) {{ return !!x.ok; }}).length;
+            var failCount = rows.length - okCount;
+            alert(
+              "Clear completed.\\n\\n" +
+              "Step: " + String(data.step || s) + "\\n" +
+              "Cascade: " + (Array.isArray(data.cascade_steps) ? data.cascade_steps.join(" -> ") : cascade.join(" -> ")) + "\\n" +
+              "Cleared cells: " + String(data.total_cleared_cells || 0) + "\\n" +
+              "Projects OK: " + String(okCount) + "\\n" +
+              "Projects failed: " + String(failCount)
+            );
+            refreshAllProjectStats();
+            refreshActionButtonStates();
+          }})
+          .catch(function(err) {{
+            alert("Step clear failed: " + (err && err.message ? err.message : err));
+          }});
         }}
 
         function refreshProjectStats(logId, projectLabel) {{
@@ -4450,6 +5119,94 @@ def index():
           }});
         }}
 
+        var _endpointPrerequisites = {{
+          "/stream-all-json": ["START"],
+          "/stream-all-prompt": ["JSON"],
+          "/stream-imagine-all": ["PROMPT"],
+          "/stream-imagine-group1": ["PROMPT"],
+          "/stream-imagine-group2": ["PROMPT"],
+          "/stream-imagine-group3": ["PROMPT"],
+          "/stream-imagine-group4": ["PROMPT"],
+          "/stream-imagine-group5": ["PROMPT"],
+          "/stream-imagine-group6": ["PROMPT"],
+          "/stream-imagine-group7": ["PROMPT"],
+          "/stream-imagine-group8": ["PROMPT"],
+          "/stream-imagine-group9": ["PROMPT"],
+          "/stream-imagine-group10": ["PROMPT"],
+          "/stream-imagine-group11": ["PROMPT"],
+          "/stream-imagine-group12": ["PROMPT"],
+          "/stream-imagine-group13": ["PROMPT"],
+          "/stream-imagine-group14": ["PROMPT"],
+          "/stream-imagine-group15": ["PROMPT"],
+          "/stream-imagine-group16": ["PROMPT"],
+          "/stream-imagine-group17": ["PROMPT"],
+          "/stream-all-article": ["IMAGINE"],
+          "/stream-all-pin-data": ["ARTICLE"],
+          "/stream-all-pin-image": ["PIN DATA"],
+          "/stream-all-wp-upload": ["ARTICLE", "PIN DATA", "PIN IMAGE"],
+          "/stream-all-pin-bulk": ["PIN DATA"]
+        }};
+
+        function _columnsByStep(cols) {{
+          var grouped = {{}};
+          (Array.isArray(cols) ? cols : []).forEach(function(c) {{
+            var step = _statStepForColumn(c && c.name);
+            if (!grouped[step]) grouped[step] = [];
+            grouped[step].push(c || {{}});
+          }});
+          return grouped;
+        }}
+
+        function _isStepCompletedForProject(statsItem, step) {{
+          if (!statsItem || !statsItem.ok) return false;
+          var cols = Array.isArray(statsItem.columns) ? statsItem.columns : [];
+          if (!cols.length) return false;
+          var maxTotal = 0;
+          cols.forEach(function(c) {{
+            var t = Number(c && c.total || 0);
+            if (t > maxTotal) maxTotal = t;
+          }});
+          // Empty project (no titles) should not block the pipeline.
+          if (maxTotal <= 0) return true;
+
+          var grouped = _columnsByStep(cols);
+          var stepCols = grouped[step] || [];
+          if (!stepCols.length) return false;
+          for (var i = 0; i < stepCols.length; i++) {{
+            var one = stepCols[i] || {{}};
+            var filled = Number(one.filled || 0);
+            var total = Number(one.total || 0);
+            if (total > 0 && filled < total) return false;
+          }}
+          return true;
+        }}
+
+        function _buildDependencyWarningMessage(endpoint, requiredSteps, blockedProjects) {{
+          var lines = [];
+          lines.push("Warning: this action needs previous step(s) completed first.");
+          lines.push("");
+          lines.push("Action: " + endpoint);
+          lines.push("Required before run: " + requiredSteps.join(" -> "));
+          lines.push("");
+          lines.push("Blocked projects (" + blockedProjects.length + "):");
+          var preview = blockedProjects.slice(0, 8);
+          preview.forEach(function(bp) {{
+            lines.push("- " + bp.project + " (missing: " + bp.missing.join(", ") + ")");
+          }});
+          if (blockedProjects.length > preview.length) {{
+            lines.push("... and " + String(blockedProjects.length - preview.length) + " more projects.");
+          }}
+          lines.push("");
+          lines.push("Continue anyway?");
+          return lines.join("\\n");
+        }}
+
+        function _checkEndpointDependencies(endpoint) {{
+          // Disabled on purpose: do not perform pre-run verification calls.
+          // Runs must start immediately for all action buttons.
+          return Promise.resolve({{ allowed: true }});
+        }}
+
         document.addEventListener("click", function(ev) {{
           var opener = ev.target.closest(".stat-chip-open");
           if (!opener) return;
@@ -4465,6 +5222,10 @@ def index():
         function startLog(endpoint, btn) {{
           if(source !== null) {{ return; }}
           disableActionButtons();
+          _clearAllBulkGlow();
+          var initialStep = _bulkStepFromEndpoint(endpoint);
+          if (initialStep) _setBulkStepGlow(initialStep, true);
+          btn.classList.add("running-glow");
 
           source = new EventSource(endpoint);
           source.onmessage = function(e) {{
@@ -4474,6 +5235,14 @@ def index():
               let line = data.line;
               if (folder && folder !== "all") {{
                 _appendProjectLog(folder, line, line.includes("Finished"));
+                var lineStep = _bulkStepFromLogLine(line);
+                if (line && line.includes("Running ")) {{
+                  if (lineStep) _setBulkStepGlow(lineStep, true);
+                }}
+                if (line && line.includes("Finished")) {{
+                  var finStep = _bulkStepFromLogLine(line);
+                  if (finStep) _setBulkStepGlow(finStep, false);
+                }}
                 if (line && line.includes("Running ")) _setProjectRunning(folder, true);
                 if(line.includes("Finished")) {{
                   _setProjectRunning(folder, false);
@@ -4493,6 +5262,9 @@ def index():
       enableActionButtons();
       source.close();
       source = null;
+      _clearAllBulkGlow();
+      refreshActionButtonStates();
+      notifyTaskFinished("Bulk task finished", "The selected dashboard step completed.");
     }}
 
   }} catch (err) {{
@@ -4504,8 +5276,11 @@ def index():
             enableActionButtons();
             source.close();
             source = null;
+            _clearAllBulkGlow();
           }};
           btn.classList.add("active");
+
+          // No pre-run dependency verification: start immediately.
         }}
 
         function askStartLimit() {{
@@ -4664,7 +5439,19 @@ def index():
           if(projectStreams[logId]) {{ return; }}
           var card = btn.closest('.card');
           var buttons = card.querySelectorAll('button.project-action');
+          var endpointByAction = {{
+            json: "/stream-all-json",
+            prompt: "/stream-all-prompt",
+            imagine: "/stream-imagine-all",
+            article: "/stream-all-article",
+            pin_data: "/stream-all-pin-data",
+            pin_image: "/stream-all-pin-image",
+            wp_upload: "/stream-all-wp-upload",
+            pin_bulk: "/stream-all-pin-bulk"
+          }};
+          var depEndpoint = endpointByAction[action] || "";
           buttons.forEach(function(b) {{ b.disabled = true; }});
+          btn.classList.add("running-glow");
           var ep = "/stream-single?project=" + encodeURIComponent(projectLabel) + "&action=" + encodeURIComponent(action);
           if (action === "start") {{
             var lim = askStartLimit();
@@ -4689,7 +5476,10 @@ def index():
                 source.close();
                 delete projectStreams[logId];
                 buttons.forEach(function(b) {{ b.disabled = false; }});
+                btn.classList.remove("running-glow");
                 refreshProjectStats(logId, projectLabel);
+                refreshActionButtonStates();
+                  notifyTaskFinished("Project task finished", projectLabel + " - " + action + " completed.");
               }}
             }} catch(err) {{
               console.error("Project SSE parse error:", err);
@@ -4701,7 +5491,9 @@ def index():
             source.close();
             delete projectStreams[logId];
             buttons.forEach(function(b) {{ b.disabled = false; }});
+            btn.classList.remove("running-glow");
           }};
+          // No pre-run dependency verification: start immediately.
         }}
         document.addEventListener("DOMContentLoaded", function() {{
           _restoreProjectLogsFromStorage();
@@ -5202,6 +5994,8 @@ def index():
         }}
         document.addEventListener("DOMContentLoaded", function() {{
           refreshAllProjectStats();
+          refreshActionButtonStates();
+          requestBrowserNotifyPermission();
           if (_statsTickerId) clearInterval(_statsTickerId);
           _statsTickerId = setInterval(function() {{
             (projectUnits || []).forEach(function(u) {{
@@ -5211,6 +6005,7 @@ def index():
           if (_statsAutoRefreshId) clearInterval(_statsAutoRefreshId);
           _statsAutoRefreshId = setInterval(function() {{
             refreshAllProjectStats();
+            refreshActionButtonStates();
           }}, STATS_REFRESH_MS);
           var fp = document.getElementById("siteEditorFormPane");
           if (fp) fp.addEventListener("input", function() {{ _siteEditorRawDirty = false; }}, true);
@@ -5266,36 +6061,20 @@ def index():
             <strong>Actions</strong>
           </div>
           <div class="card-body">
-            <button class="number-button" data-number="1" onclick="startAllStart(this)">START</button>
-            <button class="number-button" data-number="2" onclick="startLog('/stream-all-json', this)">JSON</button>
-            <button class="number-button" data-number="2" onclick="startLog('/stream-all-prompt', this)">PROMPT</button>
-            <button class="number-button" data-number="ALL" onclick="startLog('/stream-imagine-all', this)">IMAGINE ALL</button>
-            <button class="number-button" data-number="3" onclick="startLog('/stream-imagine-group1', this)">IMAGINE 1</button>
-            <button class="number-button" data-number="4" onclick="startLog('/stream-imagine-group2', this)">IMAGINE 2</button>
-            <button class="number-button" data-number="5" onclick="startLog('/stream-imagine-group3', this)">IMAGINE 3</button>
-            <button class="number-button" data-number="6" onclick="startLog('/stream-imagine-group4', this)">IMAGINE 4</button>
-            <button class="number-button" data-number="7" onclick="startLog('/stream-imagine-group5', this)">IMAGINE 5</button>
-            <button class="number-button" data-number="8" onclick="startLog('/stream-imagine-group6', this)">IMAGINE 6</button>
-            <button class="number-button" data-number="9" onclick="startLog('/stream-imagine-group7', this)">IMAGINE 7</button>
-            <button class="number-button" data-number="10" onclick="startLog('/stream-imagine-group8', this)">IMAGINE 8</button>
-            <button class="number-button" data-number="11" onclick="startLog('/stream-imagine-group9', this)">IMAGINE 9</button>
-            <button class="number-button" data-number="12" onclick="startLog('/stream-imagine-group10', this)">IMAGINE 10</button>
-            <button class="number-button" data-number="13" onclick="startLog('/stream-imagine-group11', this)">IMAGINE 11</button>
-            <button class="number-button" data-number="14" onclick="startLog('/stream-imagine-group12', this)">IMAGINE 12</button>
-            <button class="number-button" data-number="15" onclick="startLog('/stream-imagine-group13', this)">IMAGINE 13</button>
-            <button class="number-button" data-number="16" onclick="startLog('/stream-imagine-group14', this)">IMAGINE 14</button>
-            <button class="number-button" data-number="17" onclick="startLog('/stream-imagine-group15', this)">IMAGINE 15</button>
-            <button class="number-button" data-number="18" onclick="startLog('/stream-imagine-group16', this)">IMAGINE 16</button>
-            <button class="number-button" data-number="19" onclick="startLog('/stream-imagine-group17', this)">IMAGINE 17</button>
-            <button class="number-button" onclick="clearFailed()">CLEAR IMAGINE</button>
-            <button class="number-button" data-number="8" onclick="startLog('/stream_start2', this)">START2</button>
+            <button class="number-button" data-step="START" data-number="1" onclick="startAllStart(this)">START</button><button class="step-clear-button" type="button" onclick="clearStepAction('START')" title="Clear START and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="JSON" data-number="2" onclick="startLog('/stream-all-json', this)">JSON</button><button class="step-clear-button" type="button" onclick="clearStepAction('JSON')" title="Clear JSON and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="PROMPT" data-number="2" onclick="startLog('/stream-all-prompt', this)">PROMPT</button><button class="step-clear-button" type="button" onclick="clearStepAction('PROMPT')" title="Clear PROMPT and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="IMAGINE" data-number="ALL" onclick="startLog('/stream-imagine-all', this)">IMAGINE ALL</button><button class="step-clear-button" type="button" onclick="clearStepAction('IMAGINE')" title="Clear IMAGINE and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="IMAGINE" onclick="clearFailed()">CLEAR IMAGINE</button>
 
             <!-- ARTICLES, PIN DATA, WP UPLOAD: كلهم 10 ب 10 -->
-            <button class="number-button" data-number="9" onclick="startLog('/stream-all-article', this)">ARTICLE</button>
-            <button class="number-button" data-number="10" onclick="startLog('/stream-all-pin-data', this)">PIN DATA</button>
-            <button class="number-button" data-number="11" onclick="startLog('/stream-all-pin-image', this)">PIN IMAGE</button>
-            <button class="number-button" data-number="12" onclick="startLog('/stream-all-wp-upload', this)">WP UPLOAD</button>
-            <button class="number-button" data-number="13" onclick="startLog('/stream-all-pin-bulk', this)">PIN BULK</button>
+            <button class="number-button" data-step="ARTICLE" data-number="9" onclick="startLog('/stream-all-article', this)">ARTICLE</button><button class="step-clear-button" type="button" onclick="clearStepAction('ARTICLE')" title="Clear ARTICLE and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="PIN DATA" data-number="10" onclick="startLog('/stream-all-pin-data', this)">PIN DATA</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN DATA')" title="Clear PIN DATA and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="PIN IMAGE" data-number="11" onclick="startLog('/stream-all-pin-image', this)">PIN IMAGE</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN IMAGE')" title="Clear PIN IMAGE and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="WP UPLOAD" data-number="12" onclick="startLog('/stream-all-wp-upload', this)">WP UPLOAD</button><button class="step-clear-button" type="button" onclick="clearStepAction('WP UPLOAD')" title="Clear WP UPLOAD and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="PIN DATA" data-number="13" onclick="startLog('/stream-all-pin-bulk', this)">PIN BULK</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN BULK')" title="Clear PIN BULK">CLEAR</button>
+            <button class="number-button" data-number="AUTO" onclick="startLog('/stream-all-auto-safe', this)">AUTO SAFE (ALL STEPS)</button>
+            <button class="number-button" type="button" onclick="clearAllLogs()">CLEAR ALL LOGS</button>
 
             <form action="/delete-all-folder" method="post" style="display:inline-block;">
               <button class="btn btn-secondary ms-2" type="submit">Delete 'ALL'</button>
