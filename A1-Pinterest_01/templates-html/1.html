@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Pin Template 1</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1000px; height: 1500px; overflow: hidden; font-family: 'Georgia', serif; background: #fffaf2; }
+  .pin {
+    width: 1000px; height: 1500px; position: relative;
+    background: linear-gradient(180deg, #fff5e6 0%, #ffe6c2 100%);
+  }
+  .frame {
+    position: absolute; inset: 18px;
+    border: 6px double #c97b35;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .badge {
+    position: absolute; top: 46px; left: 50%; transform: translateX(-50%);
+    background: #c97b35; color: #fff8ec; padding: 10px 32px;
+    font-family: 'Georgia', serif; font-size: 22px; letter-spacing: 5px;
+    border-radius: 999px; text-transform: uppercase; z-index: 20;
+    white-space: nowrap;
+  }
+  .img-stack {
+    position: absolute; left: 56px; right: 56px; top: 112px; height: 930px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .img-stack .photo {
+    flex: 1 1 0; width: 100%;
+    background-position: center; background-size: cover; background-repeat: no-repeat;
+    border-radius: 16px;
+    box-shadow: 0 8px 22px rgba(60, 30, 10, 0.22);
+  }
+  /* ── text panel ── */
+  .text-panel {
+    position: absolute; left: 44px; right: 44px; top: 1066px; bottom: 44px;
+    background: #ffffff;
+    border: 4px solid #c97b35;
+    border-radius: 14px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 22px 32px 18px;
+    gap: 10px;
+    box-shadow: 0 6px 18px rgba(60, 30, 10, 0.15);
+    text-align: center;
+  }
+  .hook {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 34px; font-weight: 400; font-style: italic;
+    color: #c97b35; line-height: 1.1;
+  }
+  .hook:empty { display: none; }
+  .divider {
+    width: 70px; height: 3px; background: #c97b35; border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .title {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-weight: 700; color: #5a2a0a;
+    font-size: 72px; line-height: 1.04; letter-spacing: 0.4px;
+  }
+  .title.long  { font-size: 58px; }
+  .title.xlong { font-size: 46px; }
+  .caption {
+    font-family: 'Georgia', serif; font-size: 28px;
+    color: #7a4a1e; font-style: italic; line-height: 1.2;
+  }
+  .caption:empty { display: none; }
+</style>
+</head>
+<body>
+  <div class="pin">
+    <div class="frame"></div>
+    <div class="badge">Recipe</div>
+    <div class="img-stack">
+      <div class="photo" style="background-image:url('{{image_1}}');"></div>
+      <div class="photo" style="background-image:url('{{image_2}}');"></div>
+    </div>
+    <div class="text-panel">
+      <div class="hook">{{hook}}</div>
+      <div class="divider"></div>
+      <div class="title" id="ttl">{{title}}</div>
+      <div class="caption">{{text}}</div>
+    </div>
+  </div>
+  <script>
+    (function(){
+      var t = document.getElementById('ttl');
+      var n = (t.textContent || '').length;
+      if (n > 65) t.classList.add('xlong');
+      else if (n > 42) t.classList.add('long');
+      // hide empty elements (e.g. hook/caption might be empty string)
+      document.querySelectorAll('.hook, .caption').forEach(function(el){
+        if (!el.textContent.trim()) el.style.display='none';
+      });
+    })();
+  </script>
+</body>
+</html>

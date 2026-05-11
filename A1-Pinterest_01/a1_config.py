@@ -350,6 +350,34 @@ def resolve_templates_dir() -> str:
     return str(target)
 
 
+def resolve_html_templates_dir() -> str:
+    """
+    Per-project HTML pin templates folder (used by A.6b-PIN IMAGES HTML.py).
+    Default: ALL/<out_dir>/templates-html
+    Optional site override: html_templates_dir (folder name only, kept inside ALL/<out_dir>).
+    Seed missing files from A1-Pinterest_01/templates-html.
+    """
+    site = get_active_site()
+    out_dir = Path(all_output_dir())
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sub = str((site or {}).get("html_templates_dir", "") or "").strip() or "templates-html"
+    sub = Path(sub).name or "templates-html"
+    target = (out_dir / sub).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    src = (A1_DIR / "templates-html").resolve()
+    if src.is_dir():
+        for p in src.iterdir():
+            if p.is_file():
+                dst = target / p.name
+                if not dst.exists():
+                    try:
+                        shutil.copy2(str(p), str(dst))
+                    except OSError:
+                        pass
+    return str(target)
+
+
 def resolve_start_titles_excel() -> str:
     """
     Per-project START workbook for A.1-START.

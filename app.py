@@ -18,6 +18,8 @@ from flask import (
     redirect,
     url_for,
     flash,
+    send_from_directory,
+    abort,
 )
 import openpyxl
 import openai
@@ -540,6 +542,56 @@ def _project_column_stats(project_label: str) -> dict:
         wb.close()
 
 
+def _all_dir_path() -> str:
+    return os.path.join(_APP_ROOT, "ALL")
+
+
+def _value_to_all_url(val: str) -> str:
+    """If `val` points to a file inside ALL/, return a /files/all/... URL.
+
+    Accepts absolute or relative paths using either / or \\ separators.
+    Returns an empty string when the value does not resolve inside ALL/.
+    """
+    s = str(val or "").strip().strip('"').strip("'")
+    if not s:
+        return ""
+    norm = s.replace("\\", "/")
+    all_root = os.path.abspath(_all_dir_path())
+    rel = ""
+    if os.path.isabs(s) or (len(s) >= 2 and s[1] == ":"):
+        try:
+            ap = os.path.abspath(s)
+        except (OSError, ValueError):
+            return ""
+        try:
+            r = os.path.relpath(ap, all_root)
+        except ValueError:
+            return ""
+        if r.startswith("..") or os.path.isabs(r):
+            return ""
+        rel = r
+    else:
+        low = norm.lower()
+        marker = "all/"
+        idx = low.find("/" + marker)
+        if idx >= 0:
+            rel = norm[idx + 1 + len(marker):]
+        elif low.startswith(marker):
+            rel = norm[len(marker):]
+        else:
+            return ""
+    rel = rel.replace("\\", "/").lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        return ""
+    target = os.path.abspath(os.path.join(all_root, rel))
+    if os.path.commonpath([target, all_root]) != all_root:
+        return ""
+    if not os.path.isfile(target):
+        return ""
+    from urllib.parse import quote
+    return "/files/all/" + quote(rel, safe="/")
+
+
 def _project_column_details(project_label: str, column_name: str) -> dict:
     out_dir = all_out_name_for_label(project_label)
     file_path = _project_excel_path_by_out_dir(out_dir)
@@ -583,6 +635,7 @@ def _project_column_details(project_label: str, column_name: str) -> dict:
                     "row": r - 1,
                     "title": title_s,
                     "value": val_s,
+                    "value_url": _value_to_all_url(val_s),
                     "filled": bool(filled),
                 }
             )
@@ -2693,6 +2746,55 @@ def stream_all_pin_image():
 
 
 
+@app.route("/stream-all-pin-image-html")
+def stream_all_pin_image_html():
+    """
+    HTML/CSS-templated pin generation. Each project picks an .html template at random
+    from ALL/<out_dir>/templates-html/ for each row in Recipes.xlsx and renders it
+    with Playwright (1000x1500 JPEG). Same rotation idea as A.6-PIN IMAGES.py.
+    """
+    BATCH_SIZE = 3
+    _units = flat_run_units()
+    total = len(_units)
+
+    @stream_with_context
+    def stream():
+        done = 0
+        yield f"data: 🚀 Starting Pin Image (HTML) for {total} folders (batch={BATCH_SIZE})\n\n"
+
+        for i in range(0, total, BATCH_SIZE):
+            batch_u = _units[i : i + BATCH_SIZE]
+            start = i + 1
+            end = i + len(batch_u)
+
+            yield f"data: 🚀 Batch {start}-{end} / {total}\n\n"
+
+            scripts_to_run = [
+                (u["folder"], "A.6b-PIN IMAGES HTML.py", u.get("env") or {}, u["log_id"], u["label"])
+                for u in batch_u
+            ]
+
+            for line in generate_log_parallel(scripts_to_run):
+                if '"folder": "all"' in line and "Finished all processes." in line:
+                    continue
+                yield line
+
+            done += len(batch_u)
+            yield f"data: ✅ Done {done}/{total}\n\n"
+
+        yield "data: 🎉 ALL PIN IMAGE HTML DONE\n\n"
+        yield 'data: {"folder":"all","line":"Finished all processes."}\n\n'
+
+    return Response(
+        stream(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.route("/stream-all-pin-bulk")
 def stream_all_pin_bulk():
     return Response(
@@ -2710,7 +2812,7 @@ def stream_all_auto_safe():
     @stream_with_context
     def stream():
         plan = [
-            ("START", jobs_for_start1_all_except_s2(), {"kind": "parallel", "env_extra": None, "check_step": None}),
+            ("START", jobs_for_start1_all_except_s2(), {"kind": "parallel", "env_extra": None, "check_step": "START"}),
             ("JSON", jobs_for_script("A.2-JSON.py"), {"kind": "pool", "max_concurrency": 10, "check_step": "JSON"}),
             ("PROMPT", jobs_for_script("A.2-PROMPT.py"), {"kind": "parallel", "env_extra": None, "check_step": "PROMPT"}),
             ("IMAGINE ALL", jobs_for_script("A.3-IMAGINE.py"), {"kind": "parallel", "env_extra": None, "check_step": "IMAGINE"}),
@@ -2810,6 +2912,7 @@ def stream_single():
         "article": "A.4-ARTICLES.py",
         "pin_data": "A.5-PIN DATA.py",
         "pin_image": "A.6-PIN IMAGES.py",
+        "pin_image_html": "A.6b-PIN IMAGES HTML.py",
         "wp_upload": "A.7-WP UPLOAD.py",
         "pin_bulk": "A.8-PIN BULK.py",
         "start2": "A.1-START.py"
@@ -3092,6 +3195,10 @@ def _project_step_complete(project_label: str, step_name: str) -> bool:
     if not step_cols:
         return False
     for c in step_cols:
+        # Do not use error columns as completion blockers for step status.
+        cname = str((c or {}).get("name", "") or "").strip().lower()
+        if cname in {"error", "error_ing"}:
+            continue
         filled = int((c or {}).get("filled", 0) or 0)
         total = int((c or {}).get("total", 0) or 0)
         if total > 0 and filled < total:
@@ -3222,6 +3329,25 @@ def api_clear_step():
             "projects": per_project,
         }
     )
+
+
+@app.route("/files/all/<path:relpath>")
+def serve_all_file(relpath):
+    """Serve a file located inside the ALL/ directory.
+
+    Used by the column-details popup so file-path values (e.g. generated
+    images) become clickable links that open in a new tab.
+    """
+    rel = (relpath or "").replace("\\", "/").lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        abort(404)
+    all_root = os.path.abspath(_all_dir_path())
+    target = os.path.abspath(os.path.join(all_root, rel))
+    if os.path.commonpath([target, all_root]) != all_root:
+        abort(404)
+    if not os.path.isfile(target):
+        abort(404)
+    return send_from_directory(all_root, rel, as_attachment=False)
 
 
 @app.route("/api/project-column-details")
@@ -4405,6 +4531,7 @@ def index():
                 <button class="btn btn-sm btn-success project-action" data-action="article" onclick='startProjectAction({lidj}, {titlej}, "article", this)'>ARTICLE</button>
                 <button class="btn btn-sm btn-dark project-action" data-action="pin_data" onclick='startProjectAction({lidj}, {titlej}, "pin_data", this)'>PIN DATA</button>
                 <button class="btn btn-sm btn-dark project-action" data-action="pin_image" onclick='startProjectAction({lidj}, {titlej}, "pin_image", this)'>PIN IMAGE</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_image_html" onclick='startProjectAction({lidj}, {titlej}, "pin_image_html", this)' title="Render pins from per-project templates-html/*.html (Playwright)">PIN IMAGE HTML</button>
                 <button class="btn btn-sm btn-dark project-action" data-action="wp_upload" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
                 <button class="btn btn-sm btn-dark project-action" data-action="pin_bulk" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
                 <button class="btn btn-sm btn-outline-danger" onclick='clearProjectLog({lidj})'>CLEAR LOG</button>
@@ -4775,6 +4902,7 @@ def index():
             "A.4-ARTICLES.py": "article",
             "A.5-PIN DATA.py": "pin_data",
             "A.6-PIN IMAGES.py": "pin_image",
+            "A.6b-PIN IMAGES HTML.py": "pin_image_html",
             "A.7-WP UPLOAD.py": "wp_upload",
             "A.8-PIN BULK.py": "pin_bulk"
           }};
@@ -4806,6 +4934,7 @@ def index():
             "/stream-all-article": "ARTICLE",
             "/stream-all-pin-data": "PIN DATA",
             "/stream-all-pin-image": "PIN IMAGE",
+            "/stream-all-pin-image-html": "PIN IMAGE",
             "/stream-all-wp-upload": "WP UPLOAD",
             "/stream-all-pin-bulk": "PIN DATA",
             "/stream-all-auto-safe": "START"
@@ -4826,6 +4955,7 @@ def index():
             "article": "ARTICLE",
             "pin_data": "PIN DATA",
             "pin_image": "PIN IMAGE",
+            "pin_image_html": "PIN IMAGE",
             "wp_upload": "WP UPLOAD",
             "pin_bulk": "PIN DATA"
           }};
@@ -4864,11 +4994,34 @@ def index():
                 var badge = r.filled
                   ? "<span class='badge bg-success'>Done</span>"
                   : "<span class='badge bg-danger'>Missing</span>";
+                var rawVal = String(r.value || "");
+                var url = String(r.value_url || "");
+                var valueCell = "";
+                if (url) {{
+                  var lower = rawVal.toLowerCase();
+                  var isImg = /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(lower);
+                  var safeUrl = _escapeHtml(url);
+                  var safeText = _escapeHtml(rawVal);
+                  if (isImg) {{
+                    valueCell = ""
+                      + "<a href='" + safeUrl + "' target='_blank' rel='noopener noreferrer' "
+                      + "class='d-inline-flex align-items-center gap-2 text-decoration-none'>"
+                      + "<img src='" + safeUrl + "' alt='' "
+                      + "style='max-height:48px;max-width:64px;object-fit:cover;border:1px solid #e5e7eb;border-radius:4px'>"
+                      + "<span class='text-break' style='word-break:break-all'>" + safeText + "</span>"
+                      + "</a>";
+                  }} else {{
+                    valueCell = "<a href='" + safeUrl + "' target='_blank' rel='noopener noreferrer' "
+                      + "class='text-break' style='word-break:break-all'>" + safeText + "</a>";
+                  }}
+                }} else {{
+                  valueCell = _escapeHtml(rawVal);
+                }}
                 html += "<tr>"
                   + "<td>" + _escapeHtml(String(r.row || "")) + "</td>"
                   + "<td>" + _escapeHtml(String(r.title || "")) + "</td>"
                   + "<td>" + badge + "</td>"
-                  + "<td>" + _escapeHtml(String(r.value || "")) + "</td>"
+                  + "<td>" + valueCell + "</td>"
                   + "</tr>";
               }});
               html += "</tbody></table></div>";
@@ -5143,6 +5296,7 @@ def index():
           "/stream-all-article": ["IMAGINE"],
           "/stream-all-pin-data": ["ARTICLE"],
           "/stream-all-pin-image": ["PIN DATA"],
+          "/stream-all-pin-image-html": ["PIN DATA"],
           "/stream-all-wp-upload": ["ARTICLE", "PIN DATA", "PIN IMAGE"],
           "/stream-all-pin-bulk": ["PIN DATA"]
         }};
@@ -5446,6 +5600,7 @@ def index():
             article: "/stream-all-article",
             pin_data: "/stream-all-pin-data",
             pin_image: "/stream-all-pin-image",
+            pin_image_html: "/stream-all-pin-image-html",
             wp_upload: "/stream-all-wp-upload",
             pin_bulk: "/stream-all-pin-bulk"
           }};
@@ -6071,6 +6226,7 @@ def index():
             <button class="number-button" data-step="ARTICLE" data-number="9" onclick="startLog('/stream-all-article', this)">ARTICLE</button><button class="step-clear-button" type="button" onclick="clearStepAction('ARTICLE')" title="Clear ARTICLE and next dependent steps">CLEAR</button>
             <button class="number-button" data-step="PIN DATA" data-number="10" onclick="startLog('/stream-all-pin-data', this)">PIN DATA</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN DATA')" title="Clear PIN DATA and next dependent steps">CLEAR</button>
             <button class="number-button" data-step="PIN IMAGE" data-number="11" onclick="startLog('/stream-all-pin-image', this)">PIN IMAGE</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN IMAGE')" title="Clear PIN IMAGE and next dependent steps">CLEAR</button>
+            <button class="number-button" data-step="PIN IMAGE" data-number="11b" onclick="startLog('/stream-all-pin-image-html', this)" title="Render pins from per-project templates-html/*.html (Playwright)">PIN IMAGE HTML</button>
             <button class="number-button" data-step="WP UPLOAD" data-number="12" onclick="startLog('/stream-all-wp-upload', this)">WP UPLOAD</button><button class="step-clear-button" type="button" onclick="clearStepAction('WP UPLOAD')" title="Clear WP UPLOAD and next dependent steps">CLEAR</button>
             <button class="number-button" data-step="PIN DATA" data-number="13" onclick="startLog('/stream-all-pin-bulk', this)">PIN BULK</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN BULK')" title="Clear PIN BULK">CLEAR</button>
             <button class="number-button" data-number="AUTO" onclick="startLog('/stream-all-auto-safe', this)">AUTO SAFE (ALL STEPS)</button>
