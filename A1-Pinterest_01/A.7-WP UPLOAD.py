@@ -587,7 +587,13 @@ for index, row in df.iterrows():
             description=rank_math_metadesc,
             pillar_content=rank_math_pillar
         )
-
+        requests.post(
+            f"{WP_URL}/wp-json/wp/v2/posts/{post_id}",
+            headers={'Content-Type': 'application/json'},
+            auth=auth,
+            json={'title': title},
+            timeout=45
+        )
         df.at[index, 'status'] = 'publish'
         df.at[index, 'post_url'] = post_url
 
@@ -642,3 +648,4 @@ for index, row in df.iterrows():
 
 df.to_excel(EXCEL_PATH, index=False)
 logging.info("All done. Final Excel saved.")
+
