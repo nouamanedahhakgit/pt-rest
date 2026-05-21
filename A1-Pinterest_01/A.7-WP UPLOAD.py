@@ -36,9 +36,9 @@ required_columns = [
     'pinterest_title',
     'pinterest_description',
     'pinterest_image',
-    '_yoast_wpseo_focuskw',
-    '_yoast_wpseo_metadesc',
-    '_yoast_wpseo_keywordsynonyms',
+    'rank_math_focus_keyword',
+    'rank_math_description',
+    'rank_math_pillar_content',
     'categories',
     'Recipe',
     'Title'
@@ -203,16 +203,16 @@ def construct_dpsp_share_options_json(pinterest_title, pinterest_description, fe
     }
     return {'dpsp_share_options_json': json.dumps(dpsp)}
 
-def create_wordpress_post(title, content, featured_media_id=None, meta_fields=None, yoast_meta=None, categories=None, date=None):
+def create_wordpress_post(title, content, featured_media_id=None, meta_fields=None, seo_meta=None, categories=None, date=None):
     url = f"{WP_URL}/wp-json/wp/v2/posts"
     headers = {'Content-Type': 'application/json'}
     post = {'title': title,'content': content,'status': 'publish'}
     if featured_media_id: post['featured_media'] = featured_media_id
     if categories: post['categories'] = categories
     if meta_fields: post['meta'] = meta_fields
-    if yoast_meta:
+    if seo_meta:
         if 'meta' not in post: post['meta'] = {}
-        post['meta'].update(yoast_meta)
+        post['meta'].update(seo_meta)
     try:
         resp = requests.post(url, headers=headers, auth=auth, json=post)
         resp.raise_for_status()
@@ -492,9 +492,9 @@ for index, row in df.iterrows():
         if not str(recipe_text).strip():
             recipe_text = str(row.get('article', '') or '')
 
-        yoast_focuskw = row.get('_yoast_wpseo_focuskw', '')
-        yoast_metadesc = row.get('_yoast_wpseo_metadesc', '')
-        yoast_keywordsynonyms = row.get('_yoast_wpseo_keywordsynonyms', '')
+        rank_math_focuskw = row.get('rank_math_focus_keyword', '')
+        rank_math_metadesc = row.get('rank_math_description', '')
+        rank_math_pillar = row.get('rank_math_pillar_content', '')
         categories = row['categories']
 
         # Build post HTML and get post title
@@ -521,11 +521,11 @@ for index, row in df.iterrows():
 
         # Share / Yoast
         share_meta = construct_dpsp_share_options_json(pinterest_title, pinterest_description, media_id, media_url)
-        synonyms_list = [syn.strip() for syn in str(yoast_keywordsynonyms or '').split(',') if syn.strip()]
-        yoast_meta = {
-            '_yoast_wpseo_focuskw': str(yoast_focuskw or ''),
-            '_yoast_wpseo_metadesc': str(yoast_metadesc or ''),
-            '_yoast_wpseo_keywordsynonyms': json.dumps(synonyms_list)
+        rank_math_meta = {
+            'rank_math_focus_keyword': str(rank_math_focuskw or ''),
+            'rank_math_description': str(rank_math_metadesc or ''),
+            'rank_math_pillar_content': 'on' if str(rank_math_pillar).strip().lower() in ['1', 'true', 'yes',
+                                                                                          'on'] else ''
         }
 
         # Categories
@@ -538,7 +538,7 @@ for index, row in df.iterrows():
             categories_list = []
 
         # Create post
-        post_data = create_wordpress_post(title, content, media_id, share_meta, yoast_meta, categories_list if categories_list else None)
+        post_data = create_wordpress_post(title, content, media_id, share_meta, rank_math_meta, categories_list if categories_list else None)
         if not post_data:
             continue
 

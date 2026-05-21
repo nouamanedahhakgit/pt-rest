@@ -201,9 +201,9 @@ OUTPUT_COLS = [
     'pinterest_title',
     'pinterest_description',
     'pinterest_keywords',
-    '_yoast_wpseo_focuskw',
-    '_yoast_wpseo_metadesc',
-    '_yoast_wpseo_keywordsynonyms',
+    'rank_math_focus_keyword',
+    'rank_math_description',
+    'rank_math_pillar_content',
     'category',
     'categories',
 ]
@@ -264,30 +264,23 @@ def process_Recipes(input_file_path, output_file_path, api_key):
             axis=1
         )
 
-    # باقي الأعمدة (Yoast SEO وغيرها)
-    mask = base_mask & df['_yoast_wpseo_focuskw'].apply(is_empty)
+    # Rank Math SEO
+    mask = base_mask & df['rank_math_focus_keyword'].apply(is_empty)
     if mask.any():
-        df.loc[mask, '_yoast_wpseo_focuskw'] = df.loc[mask, 'Recipe'].apply(
+        df.loc[mask, 'rank_math_focus_keyword'] = df.loc[mask, 'Recipe'].apply(
             lambda r: generate_focus_keyphrase(r, api_key)
         )
 
-    mask = base_mask & df['_yoast_wpseo_metadesc'].apply(is_empty)
+    mask = base_mask & df['rank_math_description'].apply(is_empty)
     if mask.any():
-        df.loc[mask, '_yoast_wpseo_metadesc'] = df.loc[mask, 'Recipe'].apply(
+        df.loc[mask, 'rank_math_description'] = df.loc[mask, 'Recipe'].apply(
             lambda r: clean_text(generate_meta_description(r, api_key))
         )
 
-    mask = base_mask & df['_yoast_wpseo_keywordsynonyms'].apply(is_empty)
+    # optional synonyms (ila bghiti)
+    mask = base_mask & df['rank_math_pillar_content'].apply(is_empty)
     if mask.any():
-        fk_mask = base_mask & df['_yoast_wpseo_focuskw'].apply(is_empty)
-        if fk_mask.any():
-            df.loc[fk_mask, '_yoast_wpseo_focuskw'] = df.loc[fk_mask, 'Recipe'].apply(
-                lambda r: generate_focus_keyphrase(r, api_key)
-            )
-        mask = base_mask & df['_yoast_wpseo_keywordsynonyms'].apply(is_empty)
-        df.loc[mask, '_yoast_wpseo_keywordsynonyms'] = df.loc[mask, '_yoast_wpseo_focuskw'].apply(
-            lambda kw: clean_text(generate_keyphrase_synonyms(kw, api_key)) if not is_empty(kw) else ""
-        )
+        df.loc[mask, 'rank_math_pillar_content'] = "on"
 
     mask = base_mask & df['category'].apply(is_empty)
     if mask.any():
@@ -301,7 +294,7 @@ def process_Recipes(input_file_path, output_file_path, api_key):
 
     # تنظيف نهائي
     for col in ['recipe_title_pin', 'pinterest_title', 'pinterest_description',
-                'pinterest_keywords', '_yoast_wpseo_metadesc']:
+                'pinterest_keywords', 'rank_math_description']:
         if col in df.columns:
             df[col] = df[col].apply(clean_text)
 

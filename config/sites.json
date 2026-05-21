@@ -2,29 +2,70 @@
   "pipeline_code_folder": "A1-Pinterest_01",
   "sites": [
     {
-      "id": "p11",
-      "display_name": "New site (p11)",
-      "out_dir": "p11-out",
-      "wordpress_url": "https://",
+      "id": "P01",
+      "display_name": "A1-Pinterest_01",
+      "out_dir": "A1-Pinterest_01-out",
+      "templates_dir": "templates-html",
+      "openai_api_key": "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",
+      "wordpress_url": "https://lowcarbdaily.com",
+      "wordpress_user": "admin",
       "settings": {
-        "a6_template_fonts": {
-          "1.png": "ALL/p11-out/templates/CoffeeButter.ttf",
-          "2.png": "ALL/p11-out/templates/CampingTrip.otf",
-          "3.png": "ALL/p11-out/templates/CoffeeButter.ttf"
-        }
-      }
+        "category_id_mapping": {
+          "High Protein Low Carb Meals": 5,
+          "Low Carb Breakfasts": 2,
+          "Low Carb Dinner Recipes": 3,
+          "Low Carb Snacks & Desserts": 4
+        },
+        "pinterest_boards": [
+          "Keto Snack Inspiration",
+          "Sugar-Free Sweet Ideas",
+          "Low Carb Baking Recipes",
+          "Healthy Keto Dinners",
+          "Easy Family Meal Ideas",
+          "Quick Low Carb Recipes",
+          "Delicious Recipes to Try",
+          "Fast Healthy Dinner Ideas",
+          "Easy Keto Appetizers",
+          "Refreshing Summer Drink Ideas",
+          "Low Sugar Smoothies",
+          "Healthy Drink Recipes",
+          "Craving-Friendly Low Carb Ideas"
+        ]
+      },
+      "wordpress_app_password": "duIY g9Ox 9R53 lzEN vLX2 eobe"
     },
     {
-      "id": "p12",
-      "display_name": "New site (p12)",
-      "out_dir": "p12-out",
-      "wordpress_url": "https://"
-    },
-    {
-      "id": "p13",
-      "display_name": "New site (p13)",
-      "out_dir": "p13-out",
-      "wordpress_url": "https://"
+      "id": "P02",
+      "display_name": "A2-Pinterest_02",
+      "out_dir": "A2-Pinterest_02-out",
+      "templates_dir": "templates-html",
+      "openai_api_key": "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",
+      "wordpress_url": "https://lowcarbdaily.com",
+      "wordpress_user": "admin",
+      "settings": {
+        "category_id_mapping": {
+          "High Protein Low Carb Meals": 5,
+          "Low Carb Breakfasts": 2,
+          "Low Carb Dinner Recipes": 3,
+          "Low Carb Snacks & Desserts": 4
+        },
+        "pinterest_boards": [
+          "Low Carb Snacks & Bites",
+          "High Protein Desserts",
+          "Keto Cakes & Cookies",
+          "Healthy Low Carb Dinners",
+          "Family-Friendly Low Carb Meals",
+          "Easy Low Carb Recipes",
+          "Recipes to Try Today",
+          "Quick Keto Dinner Ideas",
+          "Easy Low Carb Appetizers",
+          "Summer Low Carb Drinks",
+          "Smoothies & Sugar-Free Drinks",
+          "Refreshing Keto Beverages",
+          "Healthy Food Cravings"
+        ]
+      },
+      "wordpress_app_password": "duIY g9Ox 9R53 lzEN vLX2 eobe"
     }
   ]
 }

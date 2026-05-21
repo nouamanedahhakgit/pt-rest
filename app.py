@@ -498,9 +498,8 @@ def _project_column_stats(project_label: str) -> dict:
             "pinterest_title",
             "pinterest_description",
             "pinterest_keywords",
-            "_yoast_wpseo_focuskw",
-            "_yoast_wpseo_metadesc",
-            "_yoast_wpseo_keywordsynonyms",
+            "rank_math_focus_keyword",
+            "rank_math_description",
             "categories",
             "pinterest_image",
             "output_name",
@@ -2520,17 +2519,74 @@ def stream_all_json():
 
     return Response(gen(), mimetype="text/event-stream")
 
+def generate_log_sequential_with_delay(script_names, delay_s=120, env_extra=None):
+    base_env = _subprocess_env(env_extra)
+    jobs = _normalize_script_jobs(script_names)
+
+    for idx, (folder, script, job_env, log_id, line_label) in enumerate(jobs, start=1):
+        folder_abs = os.path.join(os.getcwd(), folder)
+        script_path = os.path.join(folder_abs, script)
+
+        if not os.path.exists(script_path):
+            yield "data: " + json.dumps({
+                "folder": log_id,
+                "line": f"Script {line_label}/{script} not found."
+            }) + "\n\n"
+            continue
+
+        yield "data: " + json.dumps({
+            "folder": log_id,
+            "line": f"Running {line_label}/{script}..."
+        }) + "\n\n"
+
+        be = {**base_env, **(job_env or {})}
+        proc = _popen_pipeline_script(folder_abs, script, be)
+        running_processes.append(proc)
+
+        for line in proc.stdout:
+            yield "data: " + json.dumps({
+                "folder": log_id,
+                "line": line.rstrip()
+            }) + "\n\n"
+
+        proc.stdout.close()
+        proc.wait()
+
+        try:
+            running_processes.remove(proc)
+        except ValueError:
+            pass
+
+        yield "data: " + json.dumps({
+            "folder": log_id,
+            "line": f"Finished {line_label}/{script}"
+        }) + "\n\n"
+
+        if idx < len(jobs):
+            next_log_id = jobs[idx][3]
+
+            yield "data: " + json.dumps({
+                "folder": next_log_id,
+                "line": f"🚀 Starting script in {delay_s} seconds..."
+            }) + "\n\n"
+
+            time.sleep(delay_s)
+
+    yield "data: " + json.dumps({
+        "folder": "all",
+        "line": "Finished all IMAGINE projects."
+    }) + "\n\n"
+
+
 @app.route("/stream-imagine-all")
 def stream_imagine_all():
-    """
-    IMAGINE ALL:
-    - كيشغّل A.3-IMAGINE.py على جميع المشاريع ولكن بالمجموعات:
-      * كل مجموعة (range) كتخدم ف Thread بوحدها (Parallel).
-      * داخل كل مجموعة المشاريع كيتخدمو واحد مور واحد (Sequential).
-    - المجموعات كيتحددو من IMAGINE_ALL_RANGES.
-    """
     return Response(
-        generate_log_imagine_all_grouped(),
+        stream_with_context(
+            generate_log_sequential_with_delay(
+                jobs_for_script("A.3-IMAGINE.py"),
+                delay_s=120
+            )
+        ),
         mimetype="text/event-stream"
     )
 
@@ -3125,16 +3181,24 @@ _STEP_CLEAR_COLUMNS = {
     ],
     "ARTICLE": ["article"],
     "PIN DATA": [
-        "recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords",
-        "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms",
+        "recipe_title_pin",
+        "pinterest_title",
+        "pinterest_description",
+        "pinterest_keywords",
+        "rank_math_focus_keyword",
+        "rank_math_description",
         "categories",
     ],
     "PIN IMAGE": ["pinterest_image"],
     "WP UPLOAD": ["output_name"],
     # Keep PIN BULK aligned with pin metadata columns.
     "PIN BULK": [
-        "recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords",
-        "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms",
+        "recipe_title_pin",
+        "pinterest_title",
+        "pinterest_description",
+        "pinterest_keywords",
+        "rank_math_focus_keyword",
+        "rank_math_description",
         "categories",
     ],
 }
@@ -3170,7 +3234,7 @@ def _step_name_for_column_py(name: str) -> str:
         return "ARTICLE"
     if lk in {
         "recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords",
-        "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms", "categories",
+        "rank_math_focus_keyword", "rank_math_description", "categories",
     }:
         return "PIN DATA"
     if lk in {"pinterest_image"}:
@@ -5045,7 +5109,7 @@ def index():
           if (["prompt", "prompt image ingredients"].includes(lk)) return "PROMPT";
           if (["main_image", "image_1", "image_2", "image_3", "image_4", "statu", "error", "main_image_ingredients", "image_ing_1", "image_ing_2", "image_ing_3", "image_ing_4", "statu_ing"].includes(lk)) return "IMAGINE";
           if (["article"].includes(lk)) return "ARTICLE";
-          if (["recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords", "_yoast_wpseo_focuskw", "_yoast_wpseo_metadesc", "_yoast_wpseo_keywordsynonyms", "categories"].includes(lk)) return "PIN DATA";
+          if (["recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords", "rank_math_focus_keyword", "rank_math_description", "categories"].includes(lk)) return "PIN DATA";
           if (["pinterest_image"].includes(lk)) return "PIN IMAGE";
           if (["output_name"].includes(lk)) return "WP UPLOAD";
           return "OTHER";
