@@ -203,18 +203,20 @@ def construct_dpsp_share_options_json(pinterest_title, pinterest_description, fe
     }
     return {'dpsp_share_options_json': json.dumps(dpsp)}
 
-def create_wordpress_post(title, content, featured_media_id=None, meta_fields=None, seo_meta=None, categories=None, date=None):
+def create_wordpress_post(title, content, featured_media_id=None, meta_fields=None, categories=None, date=None):
     url = f"{WP_URL}/wp-json/wp/v2/posts"
     headers = {'Content-Type': 'application/json'}
-    post = {'title': title,'content': content,'status': 'publish'}
-    if featured_media_id: post['featured_media'] = featured_media_id
-    if categories: post['categories'] = categories
-    if meta_fields: post['meta'] = meta_fields
-    if seo_meta:
-        if 'meta' not in post: post['meta'] = {}
-        post['meta'].update(seo_meta)
+    post = {'title': title, 'content': content, 'status': 'publish'}
+
+    if featured_media_id:
+        post['featured_media'] = featured_media_id
+    if categories:
+        post['categories'] = categories
+    if meta_fields:
+        post['meta'] = meta_fields
+
     try:
-        resp = requests.post(url, headers=headers, auth=auth, json=post)
+        resp = requests.post(url, headers=headers, auth=auth, json=post, timeout=45)
         resp.raise_for_status()
         post_data = resp.json()
         logging.info(f"Post '{title}' created. ID: {post_data['id']} | URL: {post_data['link']}")
@@ -222,6 +224,39 @@ def create_wordpress_post(title, content, featured_media_id=None, meta_fields=No
     except Exception as e:
         logging.error(f"Failed to create post '{title}': {e}")
         return None
+
+
+def update_rank_math_meta(post_id, focus_keyword='', description='', pillar_content='off'):
+    focus_keyword = str(focus_keyword or '').strip()
+    description = str(description or '').strip()
+    pillar_value = 'on' if str(pillar_content or '').strip().lower() in ['1', 'true', 'yes', 'on'] else 'off'
+
+    payload = {
+        "objectID": post_id,
+        "objectType": "post",
+        "meta": {
+            "rank_math_focus_keyword": focus_keyword,
+            "rank_math_description": description,
+            "rank_math_pillar_content": pillar_value
+        }
+    }
+
+    try:
+        r = requests.post(
+            f"{WP_URL}/wp-json/rankmath/v1/updateMeta",
+            headers={'Content-Type': 'application/json'},
+            auth=auth,
+            json=payload,
+            timeout=45
+        )
+
+        logging.info(f"Rank Math update: {r.status_code} | {r.text}")
+
+        return r.status_code in (200, 201)
+
+    except Exception as e:
+        logging.error(f"Rank Math update failed: {e}")
+        return False
 
 # ===================== NEW: WPRM taxonomies helpers =====================
 
@@ -519,14 +554,8 @@ for index, row in df.iterrows():
             if image_ing_1_url:
                 content = content.replace('{{image_ing_1}}', f'<img src="{image_ing_1_url}" alt="{first_paragraph_after_heading}" />')
 
-        # Share / Yoast
+        # Share meta
         share_meta = construct_dpsp_share_options_json(pinterest_title, pinterest_description, media_id, media_url)
-        rank_math_meta = {
-            'rank_math_focus_keyword': str(rank_math_focuskw or ''),
-            'rank_math_description': str(rank_math_metadesc or ''),
-            'rank_math_pillar_content': 'on' if str(rank_math_pillar).strip().lower() in ['1', 'true', 'yes',
-                                                                                          'on'] else ''
-        }
 
         # Categories
         if pd.notna(categories) and str(categories).strip():
@@ -538,12 +567,27 @@ for index, row in df.iterrows():
             categories_list = []
 
         # Create post
-        post_data = create_wordpress_post(title, content, media_id, share_meta, rank_math_meta, categories_list if categories_list else None)
+        post_data = create_wordpress_post(
+            title=title,
+            content=content,
+            featured_media_id=media_id,
+            meta_fields=share_meta,
+            categories=categories_list if categories_list else None
+        )
         if not post_data:
             continue
 
         post_url = post_data['link']
         post_id = post_data['id']
+
+        # Update Rank Math SEO after post creation
+        update_rank_math_meta(
+            post_id=post_id,
+            focus_keyword=rank_math_focuskw,
+            description=rank_math_metadesc,
+            pillar_content=rank_math_pillar
+        )
+
         df.at[index, 'status'] = 'publish'
         df.at[index, 'post_url'] = post_url
 
