@@ -21,16 +21,72 @@ OPENAI_API_KEY = (_K5.get("openai_api_key") or os.environ.get("OPENAI_API_KEY", 
 _PP5 = a1_config.load_prompts("a5_pin_data")
 
 ARTICLE_LANGUAGE = str(_S5.get("article_language", "English"))
-CATEGORY_ID_MAPPING = dict(_S5.get("category_id_mapping") or {
-    "drinks": 1,
-    "dessert": 7,
-    "appetizers": 5,
-    "dinner": 4
-})
+
+_LEGACY_CATEGORY_SHORT_NAMES = frozenset(
+    {"drinks", "dessert", "appetizers", "dinner", "breakfast"}
+)
 
 # ================================
 # Helpers
 # ================================
+def _category_id_mapping():
+    return a1_config.get_category_id_mapping(_S5)
+
+
+def _category_needs_refresh(category_val, categories_val, mapping):
+    """True when category is empty, legacy (dinner/drinks/…), unknown, or ID mismatch."""
+    cat = str(category_val or "").strip()
+    if is_empty(cat):
+        return True
+    if cat.lower() in _LEGACY_CATEGORY_SHORT_NAMES:
+        return True
+    canonical = cat if cat in mapping else next(
+        (k for k in mapping if k.lower() == cat.lower()), None
+    )
+    if not canonical:
+        return True
+    expected = mapping.get(canonical)
+    if expected is None:
+        return True
+    try:
+        current = int(float(categories_val)) if not is_empty(categories_val) else None
+    except (ValueError, TypeError):
+        current = None
+    return current != expected
+
+
+def _resolve_row_category(category_val, recipe, api_key, mapping):
+    names = list(mapping.keys())
+    cat = str(category_val or "").strip()
+    if cat:
+        resolved = a1_config.resolve_category_name(cat, names)
+        if resolved in mapping:
+            return resolved
+    return categorize_Recipe(recipe, api_key)
+
+
+def _sync_category_columns(df, base_mask, api_key):
+    mapping = _category_id_mapping()
+    if not mapping:
+        return 0
+    mask = base_mask & df.apply(
+        lambda row: _category_needs_refresh(
+            row.get("category"), row.get("categories"), mapping
+        ),
+        axis=1,
+    )
+    fixed = int(mask.sum()) if hasattr(mask, "sum") else 0
+    if mask.any():
+        df.loc[mask, "category"] = df.loc[mask].apply(
+            lambda row: _resolve_row_category(
+                row.get("category"), row.get("Recipe"), api_key, mapping
+            ),
+            axis=1,
+        )
+    sync_mask = base_mask & df["category"].apply(lambda c: not is_empty(c))
+    if sync_mask.any():
+        df.loc[sync_mask, "categories"] = df.loc[sync_mask, "category"].map(mapping)
+    return fixed
 def is_empty(val):
     if val is None:
         return True
@@ -57,7 +113,11 @@ def clean_punctuation(text):
 def generate_recipe_title_pin(Recipe, api_key):
     openai.api_key = api_key
     sec = _PP5.get("recipe_title_pin") or {}
-    system = (sec.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
+    system = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "recipe_title_pin", "system", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+    )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
         messages=[
@@ -80,8 +140,17 @@ def generate_pinterest_title(Recipe, api_key):
     """
     openai.api_key = api_key
     sec = _PP5.get("pinterest_title") or {}
-    system = (sec.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
-    user = (sec.get("user") or "").format(article_language=ARTICLE_LANGUAGE, recipe=Recipe)
+    system = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "pinterest_title", "system", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+    )
+    user = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "pinterest_title", "user", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+        recipe=Recipe,
+    )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -92,7 +161,11 @@ def generate_pinterest_title(Recipe, api_key):
 def generate_pinterest_keywords(Recipe, api_key):
     openai.api_key = api_key
     sec = _PP5.get("pinterest_keywords") or {}
-    system = (sec.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
+    system = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "pinterest_keywords", "system", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+    )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
         messages=[{"role": "system", "content": system}, {"role": "user", "content": f"{Recipe}"}],
@@ -109,9 +182,17 @@ def generate_pinterest_description(title, keywords, api_key):
     openai.api_key = api_key
     kw_text = keywords if keywords else ""
     sec = _PP5.get("pinterest_description") or {}
-    system = (sec.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
-    user = (sec.get("user") or "").format(
-        article_language=ARTICLE_LANGUAGE, title=title, keywords=kw_text
+    system = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "pinterest_description", "system", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+    )
+    user = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "pinterest_description", "user", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+        title=title,
+        keywords=kw_text,
     )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
@@ -125,7 +206,11 @@ def generate_pinterest_description(title, keywords, api_key):
 def generate_focus_keyphrase(Recipe, api_key):
     openai.api_key = api_key
     sec = _PP5.get("focus_keyphrase") or {}
-    system = (sec.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
+    system = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "focus_keyphrase", "system", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+    )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
         messages=[{"role": "system", "content": system}, {"role": "user", "content": f"{Recipe}"}],
@@ -136,7 +221,11 @@ def generate_focus_keyphrase(Recipe, api_key):
 def generate_meta_description(Recipe, api_key):
     openai.api_key = api_key
     sec = _PP5.get("meta_description") or {}
-    system = (sec.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
+    system = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "meta_description", "system", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+    )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
         messages=[{"role": "system", "content": system}, {"role": "user", "content": f"{Recipe}"}],
@@ -147,8 +236,17 @@ def generate_meta_description(Recipe, api_key):
 def generate_keyphrase_synonyms(focuskw, api_key):
     openai.api_key = api_key
     sec = _PP5.get("keyphrase_synonyms") or {}
-    system = (sec.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
-    user = (sec.get("user") or "").format(focuskw=focuskw)
+    system = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "keyphrase_synonyms", "system", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+    )
+    user = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP5, "keyphrase_synonyms", "user", bundle="a5_pin_data"),
+        bundle="a5_pin_data",
+        article_language=ARTICLE_LANGUAGE,
+        focuskw=focuskw,
+    )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -160,35 +258,24 @@ def generate_keyphrase_synonyms(focuskw, api_key):
 
 def categorize_Recipe(Recipe, api_key):
     """
-    Classify a recipe into one of four categories based ONLY on the title.
-    Semantic-aware, uses culinary context, does NOT rely only on keywords.
+    Classify a recipe into one WordPress category (CATEGORY_ID_MAPPING key) from the title.
+    Prompt text: config/prompts/a5_pin_data.json → categorize (editable on manage_sites).
     """
     openai.api_key = api_key
-    categories = ["drinks", "dessert", "appetizers", "dinner"]
+    category_names = list(_category_id_mapping().keys())
     catp = _PP5.get("categorize") or {}
-    system_prompt = (catp.get("system") or "").strip()
-    user_prompt = (catp.get("user") or "Recipe title: {recipe}").format(recipe=Recipe)
+    system_prompt, user_prompt = a1_config.format_categorize_prompt(
+        Recipe, prompts=_PP5, settings=_S5
+    )
     response = openai.ChatCompletion.create(
         model=a1_config.get_openai_model(_S5, _K5),
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        max_tokens=int(catp.get("max_tokens", 5)),
+        max_tokens=int(catp.get("max_tokens", 40)),
         temperature=float(catp.get("temperature", 0))
     )
 
-    category = response.choices[0].message['content'].strip().lower()
-
-    # =============================
-    # Safe fallback
-    # =============================
-    if category in categories:
-        return category
-    if "drink" in category or "smoothie" in category:
-        return "drinks"
-    if "cake" in category or "sweet" in category:
-        return "dessert"
-    if "snack" in category or "starter" in category:
-        return "appetizers"
-    return "dinner"
+    category = response.choices[0].message['content'].strip()
+    return a1_config.resolve_category_name(category, category_names)
 
 
 
@@ -282,15 +369,9 @@ def process_Recipes(input_file_path, output_file_path, api_key):
     if mask.any():
         df.loc[mask, 'rank_math_pillar_content'] = "on"
 
-    mask = base_mask & df['category'].apply(is_empty)
-    if mask.any():
-        df.loc[mask, 'category'] = df.loc[mask, 'Recipe'].apply(
-            lambda r: categorize_Recipe(r, api_key)
-        )
-
-    mask = base_mask & df['categories'].apply(is_empty)
-    if mask.any():
-        df.loc[mask, 'categories'] = df.loc[mask, 'category'].map(CATEGORY_ID_MAPPING)
+    stale_cats = _sync_category_columns(df, base_mask, api_key)
+    if stale_cats:
+        print(f"♻️ Refreshed {stale_cats} row(s) with legacy/wrong WordPress category (e.g. dinner → mapping name + ID).")
 
     # تنظيف نهائي
     for col in ['recipe_title_pin', 'pinterest_title', 'pinterest_description',
@@ -314,4 +395,4 @@ if __name__ == "__main__":
     input_file_path = _px
     output_file_path = _px
     process_Recipes(input_file_path, output_file_path, OPENAI_API_KEY)
-    print("✅ Done: processed only empty rows and left filled rows untouched.")
+    print("✅ Done: filled empty cells; fixed legacy/wrong categories; left other filled rows untouched.")

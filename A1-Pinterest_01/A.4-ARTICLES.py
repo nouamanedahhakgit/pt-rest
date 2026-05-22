@@ -59,43 +59,11 @@ def extract_recipe_card_fields(recipe_text: str) -> dict:
     return out
 
 def build_card_context_block(card: dict) -> str:
-    """
-    بلوك نصي كنمرّروه ل OpenAI باش يلتزم به حرفيا.
-    إذا القيمة فارغة كنخليها N/A.
-    """
-    def v(key):
-        val = (card.get(key) or "").strip()
-        return val if val else "N/A"
+    return a1_config.build_a4_card_context_block(card, _PP4)
 
-    return (
-        "RECIPE CARD (MUST USE EXACT VALUES):\n"
-        f"Prep Time: {v('Prep Time')}\n"
-        f"Cook Time: {v('Cook Time')}\n"
-        f"Total Time: {v('Total Time')}\n"
-        f"Course: {v('Course')}\n"
-        f"Cuisine: {v('Cuisine')}\n"
-        f"Servings: {v('Servings')}\n"
-        f"Calories: {v('Calories')}\n"
-    )
 
 def build_recipe_overview_lines(card: dict) -> str:
-    """
-    Recipe Overview bullets ثابتين وبنفس الترتيب.
-    إذا N/A => Not specified in the recipe
-    """
-    def v(key):
-        val = (card.get(key) or "").strip()
-        return val if val and val.upper() != "N/A" else "Not specified in the recipe"
-
-    return (
-        f"- Prep Time: {v('Prep Time')}\n"
-        f"- Cook Time: {v('Cook Time')}\n"
-        f"- Total Time: {v('Total Time')}\n"
-        f"- Course: {v('Course')}\n"
-        f"- Cuisine: {v('Cuisine')}\n"
-        f"- Servings: {v('Servings')}\n"
-        f"- Calories: {v('Calories')}\n"
-    )
+    return a1_config.build_a4_overview_lines(card, _PP4)
 
 # ================================
 # Language-aware terms
@@ -412,14 +380,20 @@ def extract_title(recipe: str) -> str:
 
 def create_outline(recipe: str, card_context: str) -> str:
     o = _PP4.get("outline") or {}
-    prompt = (o.get("user") or "").format(
+    prompt = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP4, "outline", "user", bundle="a4_articles"),
+        bundle="a4_articles",
         total_words=TOTAL_WORDS,
         article_language=ARTICLE_LANGUAGE,
         ingredients_label=INGREDIENTS_LABEL,
         card_context=card_context,
         recipe=recipe,
     )
-    system_msg = (o.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
+    system_msg = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP4, "outline", "system", bundle="a4_articles"),
+        bundle="a4_articles",
+        article_language=ARTICLE_LANGUAGE,
+    )
     response = openai.ChatCompletion.create(
         model=_MODEL_A4,
         messages=[
@@ -437,7 +411,9 @@ def split_outline(outline: str) -> tuple:
 
 def generate_article_part1(outline_part: str, recipe_text: str, card_context: str, overview_lines: str) -> str:
     p1 = _PP4.get("part1") or {}
-    prompt = (p1.get("user") or "").format(
+    prompt = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP4, "part1", "user", bundle="a4_articles"),
+        bundle="a4_articles",
         article_language=ARTICLE_LANGUAGE,
         ingredients_label=INGREDIENTS_LABEL,
         overview_lines=overview_lines,
@@ -445,7 +421,11 @@ def generate_article_part1(outline_part: str, recipe_text: str, card_context: st
         recipe_text=recipe_text,
         outline_part=outline_part,
     )
-    system_msg = (p1.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
+    system_msg = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP4, "part1", "system", bundle="a4_articles"),
+        bundle="a4_articles",
+        article_language=ARTICLE_LANGUAGE,
+    )
     response = openai.ChatCompletion.create(
         model=_MODEL_A4,
         messages=[
@@ -458,13 +438,19 @@ def generate_article_part1(outline_part: str, recipe_text: str, card_context: st
 
 def generate_article_part2(outline_part: str, recipe_text: str, card_context: str) -> str:
     p2 = _PP4.get("part2") or {}
-    prompt = (p2.get("user") or "").format(
+    prompt = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP4, "part2", "user", bundle="a4_articles"),
+        bundle="a4_articles",
         article_language=ARTICLE_LANGUAGE,
         card_context=card_context,
         recipe_text=recipe_text,
         outline_part=outline_part,
     )
-    system_msg = (p2.get("system") or "").format(article_language=ARTICLE_LANGUAGE)
+    system_msg = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PP4, "part2", "system", bundle="a4_articles"),
+        bundle="a4_articles",
+        article_language=ARTICLE_LANGUAGE,
+    )
     response = openai.ChatCompletion.create(
         model=_MODEL_A4,
         messages=[

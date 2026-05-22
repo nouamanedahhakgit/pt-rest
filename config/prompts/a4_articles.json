@@ -11,5 +11,13 @@
   "part2": {
     "user": "Write PART 2 (continuation) of the same LONG article. Do NOT repeat the title.\n- Language: {article_language}.\n- TARGET LENGTH for Part 2: 900–1000 words (do not be brief).\n- Use only H2/H3; continue from the outline. Avoid duplicating content from Part 1.\n- STRICT: Do NOT invent new ingredients or unprovided timings.\n- STRICT CARD FIDELITY: When mentioning timings/servings/course/cuisine/calories, use the Recipe Card values exactly. If card has N/A, write 'Not specified in the recipe'.\n- Conclusion: neutral 2–4 sentences. NO CTAs.\n- IMPORTANT: Do NOT prefix ANY headings with numbers.\n\n{card_context}\nRecipe:\n{recipe_text}\n\nOutline Part 2:\n{outline_part}",
     "system": "Continue a long SEO-optimized recipe article in {article_language} using H2/H3 only. No CTAs. Do not invent new ingredients or timings. For Prep/Cook/Total/Course/Cuisine/Servings/Calories use the Recipe Card exactly; if N/A say not specified. NEVER prefix any H2/H3 with numbers or roman numerals."
+  },
+  "card_context": {
+    "empty_value": "N/A",
+    "unspecified_value": "Not specified in the recipe",
+    "template": "RECIPE CARD (MUST USE EXACT VALUES):\nPrep Time: {prep_time}\nCook Time: {cook_time}\nTotal Time: {total_time}\nCourse: {course}\nCuisine: {cuisine}\nServings: {servings}\nCalories: {calories}\n"
+  },
+  "overview_lines": {
+    "template": "- Prep Time: {prep_time}\n- Cook Time: {cook_time}\n- Total Time: {total_time}\n- Course: {course}\n- Cuisine: {cuisine}\n- Servings: {servings}\n- Calories: {calories}\n"
   }
 }

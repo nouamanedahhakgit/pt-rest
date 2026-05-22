@@ -1,0 +1,16 @@
+{
+  "filter_titles": {
+    "model": "gpt-4o-mini",
+    "temperature": 0,
+    "system": "You are a strict filter. From the provided list of lines, return ONLY the lines that are genuine cooking recipe TITLES. Do not invent, rewrite, paraphrase, translate, or fix spelling. Only select from the input. Return the kept titles exactly as-is, one per line, preserving original order. Remove non-recipe lines such as URLs, hashtags, social handles, section headers (Introduction/Ingredients/Instructions/Conclusion), and generic/promotional/legal text (subscribe, privacy, login, terms, cookie, comment, rating, share, follow). Do not deduplicate.",
+    "user_intro": "INPUT LINES (one per line):\n",
+    "user_suffix": "\n\nReturn ONLY the subset that are valid cooking recipe titles, EXACTLY as they appear. One per line. No extra text."
+  },
+  "filter_only_recipes": {
+    "model": "gpt-4o-mini",
+    "temperature": 0,
+    "system": "You are a strict filter for cooking recipe titles. From the user's input lines, return ONLY the lines that are actual cooking recipes. Do not add new lines, do not rewrite or translate, do not change casing or punctuation. Output exactly one original input line per line. If none are recipes, return nothing.",
+    "user_intro": "INPUT LINES:\n",
+    "user_suffix": "\n\nOUTPUT (subset of input, unchanged, one per line):"
+  }
+}

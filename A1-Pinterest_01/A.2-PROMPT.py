@@ -142,27 +142,15 @@ def _soft_replacements_list():
     for item in PP.get("soft_replacements") or []:
         if isinstance(item, dict) and "pattern" in item and "replace" in item:
             out.append((item["pattern"], item["replace"]))
-    return out or [
-        (r"\bbloody\b", "rich red"),
-        (r"\bblood\b", "rich red"),
-        (r"\bgunmetal\b", "charcoal gray"),
-        (r"\bsexy\b", "appealing"),
-        (r"\bsensual\b", "inviting"),
-    ]
+    return out
 
 
 def _allowed_food_style_fallback() -> str:
-    return (PP.get("allowed_food_style_fallback") or "").strip() or (
-        "realistic, appetizing, food photography, shallow depth of field, soft natural daylight, "
-        "clean minimal styling, no people, no text, no logos, no packaging"
-    )
+    return a1_config.require_prompt_string(PP, "allowed_food_style_fallback", bundle="a2_prompt")
 
 
 def _food_only_guard() -> str:
-    return (PP.get("food_only_guard") or "").strip() or (
-        "food-only scene, dish-focused, exclude people, exclude hands, exclude faces, "
-        "no text, no labels, no logos, no packaging, kitchen or neutral surface only"
-    )
+    return a1_config.require_prompt_string(PP, "food_only_guard", bundle="a2_prompt")
 
 def filter_sensitive(text: str) -> str:
     """إزالة/استبدال كلمات قد تسبب رفض (محافظ)."""
@@ -201,8 +189,8 @@ def _finalize_prompt(txt: str) -> str:
 # Prompt (final plated dish) — ultra close-up, white bowl/plate
 # ================================
 def generate_recipe(recipe_text: str) -> str:
-    sys_msg = PP.get("main_dish_system", "")
-    u_pref = PP.get("main_dish_user_prefix", "Recipe: ")
+    sys_msg = a1_config.require_prompt_string(PP, "main_dish_system", bundle="a2_prompt")
+    u_pref = a1_config.require_prompt_string(PP, "main_dish_user_prefix", bundle="a2_prompt")
     resp = _chat(
         [
             {"role": "system", "content": sys_msg},
@@ -220,7 +208,7 @@ def _extract_ingredient_list(recipe_text: str) -> str:
     """Get a UNIQUE CSV of ingredient names (model asked to avoid duplicates)."""
     resp = _chat(
         [
-            {"role": "system", "content": PP.get("ingredient_extract_system", "")},
+            {"role": "system", "content": a1_config.require_prompt_string(PP, "ingredient_extract_system", bundle="a2_prompt")},
             {"role": "user", "content": recipe_text},
         ],
         max_tokens=int(PP.get("ingredient_extract_max_tokens", 220)),
@@ -237,10 +225,10 @@ def _extract_ingredient_list(recipe_text: str) -> str:
     return ing
 
 def _compose_ingredients_prompt_from_list(ingredients_csv: str) -> str:
-    tpl = (PP.get("ingredient_scene_template") or "{ingredients_csv}").format(
-        ingredients_csv=ingredients_csv
+    tpl = a1_config.require_prompt_string(PP, "ingredient_scene_template", bundle="a2_prompt")
+    return a1_config.format_prompt_template(
+        tpl, bundle="a2_prompt", ingredients_csv=ingredients_csv
     )
-    return tpl
 
 def generate_ingredients_prompt(recipe_text: str) -> str:
     ing_csv = _extract_ingredient_list(recipe_text)

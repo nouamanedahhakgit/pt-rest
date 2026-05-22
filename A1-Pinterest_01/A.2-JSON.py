@@ -194,14 +194,14 @@ def safe_json_loads(content: str) -> dict:
 # ================================
 def call_openai_build_json(recipe_text: str, clean_title: str) -> dict:
     pj = _PROMPTS_JSON
-    system_msg = pj.get("system", "")
+    system_msg = a1_config.require_prompt_string(_PROMPTS_JSON, "system", bundle="a2_json")
     user_prompt = (
-        pj.get("preamble", "")
+        a1_config.require_prompt_string(_PROMPTS_JSON, "preamble", bundle="a2_json")
         + str(clean_title)
-        + pj.get("recipe_wrap_prefix", "")
+        + a1_config.require_prompt_string(_PROMPTS_JSON, "recipe_wrap_prefix", bundle="a2_json")
         + str(recipe_text)
-        + pj.get("recipe_wrap_suffix", "")
-        + pj.get("json_schema_block", "")
+        + a1_config.require_prompt_string(_PROMPTS_JSON, "recipe_wrap_suffix", bundle="a2_json")
+        + a1_config.require_prompt_string(_PROMPTS_JSON, "json_schema_block", bundle="a2_json")
     )
     max_tok = int(_SETTINGS.get("a2_json_max_tokens", 1200))
     temp = float(_SETTINGS.get("a2_json_temperature", 0.2))

@@ -253,6 +253,253 @@ def to_excel_with_retry(
     raise last
 
 
+def get_category_id_mapping(settings: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+    """
+    WordPress category display name -> term ID for the active site.
+
+    When the site row defines settings.category_id_mapping, that dict is used as-is
+    (not deep-merged with shared_settings) so legacy short labels like "dinner"
+    do not override your WordPress category names.
+    """
+    site = get_active_site()
+    if isinstance(site, dict):
+        st = site.get("settings")
+        if isinstance(st, dict):
+            cm = st.get("category_id_mapping")
+            if isinstance(cm, dict) and cm:
+                return {str(k): int(v) for k, v in cm.items()}
+
+    s = settings if settings is not None else load_settings()
+    cm = s.get("category_id_mapping")
+    if isinstance(cm, dict) and cm:
+        return {str(k): int(v) for k, v in cm.items()}
+
+    return {
+        "drinks": 1,
+        "dessert": 7,
+        "appetizers": 5,
+        "dinner": 4,
+    }
+
+
+def get_category_list_text(settings: Optional[Dict[str, Any]] = None) -> str:
+    """Bullet list of WordPress category names from category_id_mapping (for {category_list} in prompts)."""
+    s = settings if settings is not None else load_settings()
+    names = list(get_category_id_mapping(s).keys())
+    return "\n".join(f"- {name}" for name in names)
+
+
+def format_categorize_prompt(
+    recipe: str,
+    prompts: Optional[Dict[str, Any]] = None,
+    settings: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    """
+    Build system + user messages for recipe → WordPress category from external a5_pin_data prompts only.
+    Edit config/prompts/a5_pin_data.json → categorize, or override on the site row in manage_sites.
+    """
+    pp = prompts if prompts is not None else load_prompts("a5_pin_data")
+    s = settings if settings is not None else load_settings()
+    system_template = require_prompt_string(pp, "categorize", "system", bundle="a5_pin_data")
+    user_template = require_prompt_string(pp, "categorize", "user", bundle="a5_pin_data")
+    fmt = {
+        "category_list": get_category_list_text(s),
+        "article_language": str(s.get("article_language", "English")),
+        "recipe": recipe,
+    }
+    return format_prompt_template(system_template, bundle="a5_pin_data", **fmt), format_prompt_template(
+        user_template, bundle="a5_pin_data", **fmt
+    )
+
+
+def resolve_category_name(raw: str, category_names: list) -> str:
+    """Map model output to an exact key in category_id_mapping."""
+    raw_l = (raw or "").strip().lower()
+    if not category_names:
+        return raw or ""
+    if not raw_l:
+        for kw in ("dinner", "meal"):
+            for name in category_names:
+                if kw in name.lower():
+                    return name
+        return category_names[0]
+
+    for name in category_names:
+        if raw_l == name.lower():
+            return name
+
+    for name in category_names:
+        nl = name.lower()
+        if nl in raw_l or raw_l in nl:
+            return name
+
+    legacy = {
+        "drinks": ("drink", "smoothie", "beverage", "juice", "coffee", "tea"),
+        "dessert": ("dessert", "sweet", "cookie", "cake", "brownie", "snack"),
+        "appetizers": ("appetizer", "starter", "dip", "finger"),
+        "dinner": ("dinner", "lunch", "meal", "protein", "chicken", "beef"),
+        "breakfast": ("breakfast", "brunch", "morning"),
+    }
+    for short, keywords in legacy.items():
+        if raw_l == short or any(kw in raw_l for kw in keywords):
+            for kw in keywords + (short,):
+                for name in category_names:
+                    if kw in name.lower():
+                        return name
+
+    for kw in ("dinner", "meal"):
+        for name in category_names:
+            if kw in name.lower():
+                return name
+    return category_names[0]
+
+
+def _resolve_categorize_prompt_preview(flat: Dict[str, Any], settings: Dict[str, Any]) -> None:
+    """Resolve {category_list}, {article_language}, {recipe} in dashboard prompt previews."""
+    fmt = {
+        "category_list": get_category_list_text(settings),
+        "article_language": str(settings.get("article_language", "English")),
+        "recipe": "Garlic Butter Chicken Thighs",
+    }
+    for path in ("categorize.system", "categorize.user"):
+        raw = flat.get(path)
+        if isinstance(raw, str) and "{" in raw:
+            try:
+                flat[path] = raw.format(**fmt)
+            except KeyError:
+                pass
+
+
+def require_prompt_string(
+    prompts: Dict[str, Any],
+    *path: str,
+    bundle: str = "prompts",
+) -> str:
+    """Return a non-empty prompt string from nested prompts dict or raise."""
+    cur: Any = prompts
+    for p in path:
+        if not isinstance(cur, dict):
+            cur = None
+            break
+        cur = cur.get(p)
+    if not isinstance(cur, str) or not cur.strip():
+        dotted = ".".join(path)
+        raise RuntimeError(
+            f"Missing {bundle} → {dotted} "
+            f"(add in config/prompts/*.json or manage_sites → Prompt Overrides)."
+        )
+    return cur.strip()
+
+
+def format_prompt_template(template: str, *, bundle: str = "prompts", **kwargs: Any) -> str:
+    try:
+        return template.format(**kwargs)
+    except KeyError as e:
+        raise RuntimeError(f"{bundle} prompt template missing placeholder: {e}") from e
+
+
+def format_a6b_pin_texts(
+    recipe: str,
+    prompts: Optional[Dict[str, Any]] = None,
+    settings: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    pp = prompts if prompts is not None else load_prompts("a6b_pin_image_html")
+    s = settings if settings is not None else load_settings()
+    lang = str(s.get("article_language", "English"))
+    system = format_prompt_template(
+        require_prompt_string(pp, "pin_texts", "system", bundle="a6b_pin_image_html"),
+        bundle="a6b_pin_image_html",
+        language=lang,
+        recipe=recipe,
+    )
+    user = format_prompt_template(
+        require_prompt_string(pp, "pin_texts", "user", bundle="a6b_pin_image_html"),
+        bundle="a6b_pin_image_html",
+        language=lang,
+        recipe=recipe,
+    )
+    return system, user
+
+
+def format_a8_categorize_boards(
+    article: str,
+    boards: list,
+    prompts: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    pp = prompts if prompts is not None else load_prompts("a8_pin_bulk")
+    pdef = pp.get("categorize_boards")
+    if not isinstance(pdef, dict):
+        raise RuntimeError(
+            "Missing a8_pin_bulk.categorize_boards in config/prompts/a8_pin_bulk.json"
+        )
+    system = require_prompt_string(pp, "categorize_boards", "system", bundle="a8_pin_bulk")
+    user_intro = require_prompt_string(pp, "categorize_boards", "user_intro", bundle="a8_pin_bulk")
+    user_mid = require_prompt_string(pp, "categorize_boards", "user_mid", bundle="a8_pin_bulk")
+    user_suffix = require_prompt_string(pp, "categorize_boards", "user_suffix", bundle="a8_pin_bulk")
+    user = user_intro + ", ".join(boards) + user_mid + f"Article: {article}" + user_suffix
+    return system, user
+
+
+def _a4_card_fmt(card: Dict[str, Any], prompts: Dict[str, Any], *, for_overview: bool) -> Dict[str, str]:
+    cc = prompts.get("card_context") or {}
+    empty = str(cc.get("empty_value") or "N/A")
+    unspecified = str(cc.get("unspecified_value") or "Not specified in the recipe")
+
+    def val(key: str) -> str:
+        raw = (card.get(key) or "").strip()
+        if for_overview:
+            if not raw or raw.upper() == "N/A":
+                return unspecified
+            return raw
+        return raw if raw else empty
+
+    return {
+        "prep_time": val("Prep Time"),
+        "cook_time": val("Cook Time"),
+        "total_time": val("Total Time"),
+        "course": val("Course"),
+        "cuisine": val("Cuisine"),
+        "servings": val("Servings"),
+        "calories": val("Calories"),
+    }
+
+
+def build_a4_card_context_block(
+    card: Dict[str, Any],
+    prompts: Optional[Dict[str, Any]] = None,
+) -> str:
+    pp = prompts if prompts is not None else load_prompts("a4_articles")
+    tpl = require_prompt_string(pp, "card_context", "template", bundle="a4_articles")
+    return format_prompt_template(tpl, bundle="a4_articles", **_a4_card_fmt(card, pp, for_overview=False))
+
+
+def build_a4_overview_lines(
+    card: Dict[str, Any],
+    prompts: Optional[Dict[str, Any]] = None,
+) -> str:
+    pp = prompts if prompts is not None else load_prompts("a4_articles")
+    tpl = require_prompt_string(pp, "overview_lines", "template", bundle="a4_articles")
+    return format_prompt_template(tpl, bundle="a4_articles", **_a4_card_fmt(card, pp, for_overview=True))
+
+
+def format_app_title_filter(
+    lines: list,
+    section: str,
+    prompts: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    pp = prompts if prompts is not None else load_prompts("app_title_filter")
+    sec = pp.get(section)
+    if not isinstance(sec, dict):
+        raise RuntimeError(
+            f"Missing app_title_filter.{section} in config/prompts/app_title_filter.json"
+        )
+    system = require_prompt_string(pp, section, "system", bundle="app_title_filter")
+    user_intro = require_prompt_string(pp, section, "user_intro", bundle="app_title_filter")
+    user_suffix = require_prompt_string(pp, section, "user_suffix", bundle="app_title_filter")
+    user = user_intro + "\n".join(lines) + user_suffix
+    return system, user
+
+
 def get_openai_model(settings: Optional[Dict[str, Any]] = None, keys: Optional[Dict[str, Any]] = None) -> str:
     s = settings if settings is not None else load_settings()
     k = keys if keys is not None else load_keys()
@@ -760,8 +1007,17 @@ _INLINE_PROMPT_NAMES = (
     "a2_prompt",
     "a4_articles",
     "a5_pin_data",
+    "a6b_pin_image_html",
     "a8_pin_bulk",
+    "app_title_filter",
 )
+
+_CATEGORIZE_FIELD_LABELS = {
+    "categorize.system": "Recipe → WordPress category — system prompt ({category_list} from category_id_mapping)",
+    "categorize.user": "Recipe → WordPress category — user message ({recipe} = recipe title from Excel)",
+    "categorize.max_tokens": "Recipe → WordPress category — max_tokens",
+    "categorize.temperature": "Recipe → WordPress category — temperature",
+}
 
 
 def _prompt_leaf_field_kind(key: str, val: Any) -> str:
@@ -833,6 +1089,11 @@ def prompts_inline_field_schema() -> Dict[str, Any]:
         rows: list = []
         _flatten_repo_prompt_to_fields(raw, "", rows)
         rows.sort(key=lambda r: (r.get("path") or ""))
+        for row in rows:
+            path = str(row.get("path") or "")
+            if path in _CATEGORIZE_FIELD_LABELS:
+                row["label"] = _CATEGORIZE_FIELD_LABELS[path]
+                row["group"] = "categorize"
         result[n] = rows
     return result
 
@@ -863,6 +1124,8 @@ def prompts_effective_by_path() -> Dict[str, Dict[str, Any]]:
             continue
         flat: Dict[str, Any] = {}
         _flatten_merged_prompt_to_map(p, "", flat)
+        if n == "a5_pin_data":
+            _resolve_categorize_prompt_preview(flat, load_settings())
         result[n] = flat
     return result
 
@@ -880,6 +1143,8 @@ def prompts_excluding_row_inline_by_path() -> Dict[str, Dict[str, Any]]:
             continue
         flat: Dict[str, Any] = {}
         _flatten_merged_prompt_to_map(p, "", flat)
+        if n == "a5_pin_data":
+            _resolve_categorize_prompt_preview(flat, load_settings())
         result[n] = flat
     return result
 
@@ -924,7 +1189,16 @@ def resolved_runtime_snapshot() -> Dict[str, Any]:
     st = load_settings()
     k_all = load_keys()
     k_view = _redact_keys_for_view(k_all)
-    pr_names = ("a1_start", "a2_json", "a2_prompt", "a4_articles", "a5_pin_data", "a8_pin_bulk")
+    pr_names = (
+        "a1_start",
+        "a2_json",
+        "a2_prompt",
+        "a4_articles",
+        "a5_pin_data",
+        "a6b_pin_image_html",
+        "a8_pin_bulk",
+        "app_title_filter",
+    )
     prompts_summary: Dict[str, Any] = {}
     for n in pr_names:
         p = load_prompts(n)

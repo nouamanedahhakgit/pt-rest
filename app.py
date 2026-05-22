@@ -500,9 +500,12 @@ def _project_column_stats(project_label: str) -> dict:
             "pinterest_keywords",
             "rank_math_focus_keyword",
             "rank_math_description",
+            "rank_math_pillar_content",
+            "category",
             "categories",
             "pinterest_image",
-            "output_name",
+            "status",
+            "post_url",
         ]
 
         by_lower = {str(h).strip().lower(): i for i, h in enumerate(headers)}
@@ -3169,7 +3172,8 @@ _STEP_CLEAR_ORDER = [
     "PIN BULK",
 ]
 
-_STEP_CLEAR_COLUMNS = {
+# Columns each pipeline step fills in Recipes.xlsx (or related output).
+_STEP_FILL_COLUMNS: Dict[str, List[str]] = {
     "START": ["Title", "Recipe", "Generated At"],
     "JSON": ["Json Recipe"],
     "PROMPT": ["Prompt", "Prompt Image Ingredients"],
@@ -3187,11 +3191,34 @@ _STEP_CLEAR_COLUMNS = {
         "pinterest_keywords",
         "rank_math_focus_keyword",
         "rank_math_description",
+        "rank_math_pillar_content",
+        "category",
         "categories",
     ],
     "PIN IMAGE": ["pinterest_image"],
-    "WP UPLOAD": ["output_name"],
-    # Keep PIN BULK aligned with pin metadata columns.
+    "PIN IMAGE HTML": ["pinterest_image"],
+    "WP UPLOAD": ["status", "post_url"],
+    "PIN BULK": [
+        "Pin_01.xlsx → Pinterest Pin Link",
+        "Pin_01.xlsx → Picture Url 1",
+        "Pin_01.xlsx → Text",
+        "Pin_01.xlsx → Pinterest Pin Title",
+        "Pin_01.xlsx → Pinterest Board",
+        "Pin_01.xlsx → Date",
+        "Pin_01.xlsx → Time",
+    ],
+}
+
+_STEP_CLEAR_COLUMNS = {
+    "START": _STEP_FILL_COLUMNS["START"],
+    "JSON": _STEP_FILL_COLUMNS["JSON"],
+    "PROMPT": _STEP_FILL_COLUMNS["PROMPT"],
+    "IMAGINE": _STEP_FILL_COLUMNS["IMAGINE"],
+    "ARTICLE": _STEP_FILL_COLUMNS["ARTICLE"],
+    "PIN DATA": _STEP_FILL_COLUMNS["PIN DATA"],
+    "PIN IMAGE": _STEP_FILL_COLUMNS["PIN IMAGE"],
+    "WP UPLOAD": _STEP_FILL_COLUMNS["WP UPLOAD"],
+    # CLEAR PIN BULK resets pin-metadata columns on Recipes.xlsx (not Pin_01.xlsx).
     "PIN BULK": [
         "recipe_title_pin",
         "pinterest_title",
@@ -3199,9 +3226,45 @@ _STEP_CLEAR_COLUMNS = {
         "pinterest_keywords",
         "rank_math_focus_keyword",
         "rank_math_description",
+        "rank_math_pillar_content",
+        "category",
         "categories",
     ],
 }
+
+_STEP_ACTION_TOOLTIPS: Dict[str, Dict[str, str]] = {
+    "CLEAR IMAGINE": {
+        "run": "Deletes Recipes.xlsx rows where statu or statu_ing is empty or FAILED (failed Midjourney jobs only).",
+        "clear": "Deletes Recipes.xlsx rows where statu or statu_ing is empty or FAILED (failed Midjourney jobs only).",
+    },
+    "AUTO SAFE": {
+        "run": "Runs all steps in order (START → … → PIN BULK). Fills every Recipes.xlsx pipeline column; PIN BULK writes Pin_01.xlsx.",
+        "clear": "",
+    },
+    "CLEAR ALL LOGS": {
+        "run": "Clears log panel text only — does not change Recipes.xlsx or Pin_01.xlsx.",
+        "clear": "Clears log panel text only — does not change Recipes.xlsx or Pin_01.xlsx.",
+    },
+    "CLEAR PROJECT LOG": {
+        "run": "Clears this project's log panel only — does not change Recipes.xlsx or Pin_01.xlsx.",
+        "clear": "Clears this project's log panel only — does not change Recipes.xlsx or Pin_01.xlsx.",
+    },
+}
+
+
+def _step_columns_meta_for_ui() -> Dict[str, Any]:
+    """JSON-safe metadata for dashboard button tooltips."""
+    steps = {}
+    for step, cols in _STEP_FILL_COLUMNS.items():
+        steps[step] = {
+            "fills": list(cols),
+            "clears": list(_STEP_CLEAR_COLUMNS.get(step, cols)),
+        }
+    return {
+        "order": list(_STEP_CLEAR_ORDER),
+        "steps": steps,
+        "special": dict(_STEP_ACTION_TOOLTIPS),
+    }
 
 
 def _normalize_step_name(step: str) -> str:
@@ -3234,12 +3297,13 @@ def _step_name_for_column_py(name: str) -> str:
         return "ARTICLE"
     if lk in {
         "recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords",
-        "rank_math_focus_keyword", "rank_math_description", "categories",
+        "rank_math_focus_keyword", "rank_math_description", "rank_math_pillar_content",
+        "category", "categories",
     }:
         return "PIN DATA"
     if lk in {"pinterest_image"}:
         return "PIN IMAGE"
-    if lk in {"output_name"}:
+    if lk in {"status", "post_url"}:
         return "WP UPLOAD"
     return "OTHER"
 
@@ -3815,6 +3879,28 @@ def delete_all_folder():
 # 4) Bulk Titles Upload (OpenAI line-by-line, NO JSON from OpenAI)
 # ------------------------------------------------------------------
 
+def _load_pipeline_a1_config():
+    folder = "A1-Pinterest_01"
+    try:
+        d = _load_sites_file_app()
+        folder = str(d.get("pipeline_code_folder") or folder)
+    except Exception:
+        pass
+    return _a1_config_module_for_pipeline_folder(folder)
+
+
+def _load_pipeline_prompts(name: str) -> dict:
+    mod = _load_pipeline_a1_config()
+    if mod is not None and hasattr(mod, "load_prompts"):
+        return mod.load_prompts(name)
+    path = os.path.join(_APP_CONFIG, "prompts", f"{name}.json")
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    return {}
+
+
 def filter_only_recipes_with_openai(raw_titles):
     """
     Keep ONLY the lines that are actual cooking recipe titles.
@@ -3859,14 +3945,12 @@ def filter_only_recipes_with_openai(raw_titles):
     if not cleaned:
         return []
 
-    # Build OpenAI prompt: strict subset, no rewriting, no additions
-    system_msg = (
-        "You are a strict filter for cooking recipe titles. "
-        "From the user's input lines, return ONLY the lines that are actual cooking recipes. "
-        "Do not add new lines, do not rewrite or translate, do not change casing or punctuation. "
-        "Output exactly one original input line per line. If none are recipes, return nothing."
-    )
-    user_payload = "INPUT LINES:\\n" + "\\n".join(cleaned) + "\\n\\nOUTPUT (subset of input, unchanged, one per line):"
+    pp = _load_pipeline_prompts("app_title_filter")
+    mod = _load_pipeline_a1_config()
+    if mod is None:
+        raise RuntimeError("a1_config not found — cannot load app_title_filter prompts")
+    system_msg, user_payload = mod.format_app_title_filter(cleaned, "filter_only_recipes", prompts=pp)
+    sec = pp.get("filter_only_recipes") or {}
 
     try:
         messages = [
@@ -3874,7 +3958,9 @@ def filter_only_recipes_with_openai(raw_titles):
             {"role": "user", "content": user_payload},
         ]
         resp = chat_completion_with_retry(
-            messages, model="gpt-4o-mini", temperature=0
+            messages,
+            model=str(sec.get("model") or "gpt-4o-mini"),
+            temperature=float(sec.get("temperature", 0)),
         )
         assistant_msg = resp["choices"][0]["message"]["content"].strip()
 
@@ -3929,16 +4015,12 @@ def filter_titles_with_openai(raw_titles):
     if not cleaned:
         return []
 
-    system_content = (
-        "You are a strict filter. From the provided list of lines, return ONLY the lines that are genuine cooking "
-        "recipe TITLES. Do not invent, rewrite, paraphrase, translate, or fix spelling. Only select from the input. "
-        "Return the kept titles exactly as-is, one per line, preserving original order. Remove non-recipe lines such as "
-        "URLs, hashtags, social handles, section headers (Introduction/Ingredients/Instructions/Conclusion), and generic/promotional/legal text "
-        "(subscribe, privacy, login, terms, cookie, comment, rating, share, follow). Do not deduplicate."
-    )
-
-    # Put the lines under a clear marker so the model cannot hallucinate extras
-    user_content = "INPUT LINES (one per line):\n" + "\n".join(cleaned) + "\n\n" +                    "Return ONLY the subset that are valid cooking recipe titles, EXACTLY as they appear. One per line. No extra text."
+    pp = _load_pipeline_prompts("app_title_filter")
+    mod = _load_pipeline_a1_config()
+    if mod is None:
+        raise RuntimeError("a1_config not found — cannot load app_title_filter prompts")
+    system_content, user_content = mod.format_app_title_filter(cleaned, "filter_titles", prompts=pp)
+    sec = pp.get("filter_titles") or {}
 
     try:
         resp = chat_completion_with_retry(
@@ -3946,8 +4028,8 @@ def filter_titles_with_openai(raw_titles):
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content},
             ],
-            model="gpt-4o-mini",
-            temperature=0,
+            model=str(sec.get("model") or "gpt-4o-mini"),
+            temperature=float(sec.get("temperature", 0)),
         )
         text = resp["choices"][0]["message"]["content"]
     except Exception as e:
@@ -4569,6 +4651,7 @@ def index():
     project_units_json = _json_for_inline_script(
         [{"log_id": u["log_id"], "label": u["label"]} for u in _units]
     )
+    step_columns_meta_json = _json_for_inline_script(_step_columns_meta_for_ui())
 
     log_boxes = ""
     for u in _units:
@@ -4588,17 +4671,17 @@ def index():
               </div>
               <div class="card-body overflow-auto" style="height:200px;" id="log_{lid}"></div>
               <div class="card-footer">
-                <button class="btn btn-sm btn-primary project-action" data-action="start" onclick='startProjectAction({lidj}, {titlej}, "start", this)'>START</button>
-                <button class="btn btn-sm btn-secondary project-action" data-action="json" onclick='startProjectAction({lidj}, {titlej}, "json", this)'>JSON</button>
-                <button class="btn btn-sm btn-warning project-action" data-action="prompt" onclick='startProjectAction({lidj}, {titlej}, "prompt", this)'>PROMPT</button>
-                <button class="btn btn-sm btn-info project-action" data-action="imagine" onclick='startProjectAction({lidj}, {titlej}, "imagine", this)'>IMAGINE</button>
-                <button class="btn btn-sm btn-success project-action" data-action="article" onclick='startProjectAction({lidj}, {titlej}, "article", this)'>ARTICLE</button>
-                <button class="btn btn-sm btn-dark project-action" data-action="pin_data" onclick='startProjectAction({lidj}, {titlej}, "pin_data", this)'>PIN DATA</button>
-                <button class="btn btn-sm btn-dark project-action" data-action="pin_image" onclick='startProjectAction({lidj}, {titlej}, "pin_image", this)'>PIN IMAGE</button>
-                <button class="btn btn-sm btn-dark project-action" data-action="pin_image_html" onclick='startProjectAction({lidj}, {titlej}, "pin_image_html", this)' title="Render pins from per-project templates-html/*.html (Playwright)">PIN IMAGE HTML</button>
-                <button class="btn btn-sm btn-dark project-action" data-action="wp_upload" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
-                <button class="btn btn-sm btn-dark project-action" data-action="pin_bulk" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
-                <button class="btn btn-sm btn-outline-danger" onclick='clearProjectLog({lidj})'>CLEAR LOG</button>
+                <button class="btn btn-sm btn-primary project-action" data-action="start" data-step-key="START" onclick='startProjectAction({lidj}, {titlej}, "start", this)'>START</button>
+                <button class="btn btn-sm btn-secondary project-action" data-action="json" data-step-key="JSON" onclick='startProjectAction({lidj}, {titlej}, "json", this)'>JSON</button>
+                <button class="btn btn-sm btn-warning project-action" data-action="prompt" data-step-key="PROMPT" onclick='startProjectAction({lidj}, {titlej}, "prompt", this)'>PROMPT</button>
+                <button class="btn btn-sm btn-info project-action" data-action="imagine" data-step-key="IMAGINE" onclick='startProjectAction({lidj}, {titlej}, "imagine", this)'>IMAGINE</button>
+                <button class="btn btn-sm btn-success project-action" data-action="article" data-step-key="ARTICLE" onclick='startProjectAction({lidj}, {titlej}, "article", this)'>ARTICLE</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_data" data-step-key="PIN DATA" onclick='startProjectAction({lidj}, {titlej}, "pin_data", this)'>PIN DATA</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_image" data-step-key="PIN IMAGE" onclick='startProjectAction({lidj}, {titlej}, "pin_image", this)'>PIN IMAGE</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_image_html" data-step-key="PIN IMAGE HTML" onclick='startProjectAction({lidj}, {titlej}, "pin_image_html", this)'>PIN IMAGE HTML</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="wp_upload" data-step-key="WP UPLOAD" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
+                <button class="btn btn-sm btn-dark project-action" data-action="pin_bulk" data-step-key="PIN BULK" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
+                <button class="btn btn-sm btn-outline-danger project-clear-log" data-step-key="CLEAR PROJECT LOG" onclick='clearProjectLog({lidj})'>CLEAR LOG</button>
               </div>
             </div>
           </div>
@@ -4727,6 +4810,14 @@ def index():
           cursor: pointer;
         }}
         .step-clear-button:hover {{ background: #ffe3e3; }}
+        .tooltip.step-col-tooltip .tooltip-inner {{
+          max-width: min(480px, 92vw);
+          text-align: left;
+          white-space: normal;
+        }}
+        .card-footer .project-action {{
+          margin: 0 0.15rem 0.25rem 0;
+        }}
         #previewTable td {{ padding: 5px; vertical-align: middle; }}
         #previewTable button {{ margin-left: 10px; }}
         #siteConfigModal .modal-dialog {{ max-width: min(1140px, 96vw); margin-left: auto; margin-right: auto; }}
@@ -4796,6 +4887,119 @@ def index():
         var source = null;
         var projectFolders = {project_folders_json};
         var projectUnits = {project_units_json};
+        var stepColumnsMeta = {step_columns_meta_json};
+
+        function _stepMeta(stepKey) {{
+          if (!stepColumnsMeta || !stepColumnsMeta.steps) return null;
+          return stepColumnsMeta.steps[stepKey] || null;
+        }}
+
+        function _columnsForCascadeClear(stepKey) {{
+          var order = (stepColumnsMeta && stepColumnsMeta.order) ? stepColumnsMeta.order.slice() : _clearCascadeFrom(stepKey);
+          var idx = order.indexOf(String(stepKey || "").trim().toUpperCase());
+          if (idx < 0) return {{ steps: [], columns: [] }};
+          var steps = order.slice(idx);
+          var seen = {{}};
+          var cols = [];
+          steps.forEach(function(st) {{
+            var m = _stepMeta(st);
+            var arr = (m && m.clears) ? m.clears : [];
+            arr.forEach(function(c) {{
+              var k = String(c || "");
+              if (!k || seen[k]) return;
+              seen[k] = true;
+              cols.push(k);
+            }});
+          }});
+          return {{ steps: steps, columns: cols }};
+        }}
+
+        function _runStepTooltip(stepKey) {{
+          var sk = String(stepKey || "").trim().toUpperCase();
+          var special = stepColumnsMeta && stepColumnsMeta.special && stepColumnsMeta.special[sk];
+          if (special && special.run) return special.run;
+          var m = _stepMeta(sk);
+          if (!m || !m.fills || !m.fills.length) return "Run " + sk;
+          return "Fills: " + m.fills.join(", ");
+        }}
+
+        function _clearStepTooltip(stepKey) {{
+          var sk = String(stepKey || "").trim().toUpperCase();
+          var special = stepColumnsMeta && stepColumnsMeta.special && stepColumnsMeta.special[sk];
+          if (special && special.clear) return special.clear;
+          var casc = _columnsForCascadeClear(sk);
+          if (!casc.columns.length) return "Clear " + sk + " and dependent steps";
+          return "Clears Recipes.xlsx (cascade " + casc.steps.join(" → ") + "): " + casc.columns.join(", ");
+        }}
+
+        function _attachStepTooltip(btn, text) {{
+          if (!btn || text == null) return;
+          var t = String(text);
+          btn.setAttribute("title", t);
+          btn.setAttribute("data-bs-toggle", "tooltip");
+          btn.setAttribute("data-bs-placement", "top");
+          if (typeof bootstrap !== "undefined" && bootstrap.Tooltip) {{
+            try {{
+              var old = bootstrap.Tooltip.getInstance(btn);
+              if (old) old.dispose();
+              new bootstrap.Tooltip(btn, {{ customClass: "step-col-tooltip", trigger: "hover focus" }});
+            }} catch (e) {{}}
+          }}
+        }}
+
+        function applyStepButtonTooltips() {{
+          // Per-project card footer (START, JSON, …, PIN BULK)
+          document.querySelectorAll(".card-footer .project-action[data-step-key]").forEach(function(btn) {{
+            _attachStepTooltip(btn, _runStepTooltip(btn.getAttribute("data-step-key")));
+          }});
+          document.querySelectorAll(".card-footer .project-clear-log, .card-footer button[onclick*='clearProjectLog']").forEach(function(btn) {{
+            btn.setAttribute("data-step-key", "CLEAR PROJECT LOG");
+            _attachStepTooltip(btn, _runStepTooltip("CLEAR PROJECT LOG"));
+          }});
+
+          // Global Actions — run buttons
+          document.querySelectorAll("[data-step-key]").forEach(function(btn) {{
+            if (btn.closest(".card-footer")) return;
+            var sk = btn.getAttribute("data-step-key");
+            if (sk) _attachStepTooltip(btn, _runStepTooltip(sk));
+          }});
+          document.querySelectorAll(".number-button[data-step]").forEach(function(btn) {{
+            if (btn.getAttribute("data-step-key")) return;
+            var num = btn.getAttribute("data-number");
+            if (num === "11b") {{
+              btn.setAttribute("data-step-key", "PIN IMAGE HTML");
+              _attachStepTooltip(btn, _runStepTooltip("PIN IMAGE HTML"));
+              return;
+            }}
+            if (num === "AUTO") {{
+              btn.setAttribute("data-step-key", "AUTO SAFE");
+              _attachStepTooltip(btn, _runStepTooltip("AUTO SAFE"));
+              return;
+            }}
+            if (btn.getAttribute("onclick") && btn.getAttribute("onclick").indexOf("clearAllLogs") >= 0) {{
+              btn.setAttribute("data-step-key", "CLEAR ALL LOGS");
+              _attachStepTooltip(btn, _runStepTooltip("CLEAR ALL LOGS"));
+              return;
+            }}
+            if (btn.getAttribute("onclick") && btn.getAttribute("onclick").indexOf("clearFailed") >= 0) {{
+              btn.setAttribute("data-step-key", "CLEAR IMAGINE");
+              _attachStepTooltip(btn, _runStepTooltip("CLEAR IMAGINE"));
+              return;
+            }}
+            var step = btn.getAttribute("data-step");
+            if (step) {{
+              btn.setAttribute("data-step-key", step);
+              _attachStepTooltip(btn, _runStepTooltip(step));
+            }}
+          }});
+          document.querySelectorAll(".step-clear-button").forEach(function(btn) {{
+            var oc = btn.getAttribute("onclick") || "";
+            var m = oc.match(/clearStepAction\\('([^']+)'\\)/);
+            if (!m) return;
+            btn.setAttribute("data-clear-step", m[1]);
+            _attachStepTooltip(btn, _clearStepTooltip(m[1]));
+          }});
+        }}
         var numXlsx = {num_xlsx};
         var _projectLogHistory = {{}};
         var STATS_REFRESH_MS = 30000;
@@ -5109,9 +5313,9 @@ def index():
           if (["prompt", "prompt image ingredients"].includes(lk)) return "PROMPT";
           if (["main_image", "image_1", "image_2", "image_3", "image_4", "statu", "error", "main_image_ingredients", "image_ing_1", "image_ing_2", "image_ing_3", "image_ing_4", "statu_ing"].includes(lk)) return "IMAGINE";
           if (["article"].includes(lk)) return "ARTICLE";
-          if (["recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords", "rank_math_focus_keyword", "rank_math_description", "categories"].includes(lk)) return "PIN DATA";
+          if (["recipe_title_pin", "pinterest_title", "pinterest_description", "pinterest_keywords", "rank_math_focus_keyword", "rank_math_description", "rank_math_pillar_content", "category", "categories"].includes(lk)) return "PIN DATA";
           if (["pinterest_image"].includes(lk)) return "PIN IMAGE";
-          if (["output_name"].includes(lk)) return "WP UPLOAD";
+          if (["status", "post_url"].includes(lk)) return "WP UPLOAD";
           return "OTHER";
         }}
 
@@ -5258,16 +5462,19 @@ def index():
             alert("Unknown step: " + s);
             return;
           }}
+          var casc = _columnsForCascadeClear(s);
+          var colLine = casc.columns.length ? ("Columns cleared:\\n  " + casc.columns.join(", ")) : "";
           var msg = [
             "WARNING: You are about to clear step data.",
             "",
             "Selected step: " + s,
             "This will also clear dependent next steps:",
             "  " + cascade.join("  ->  "),
+            colLine,
             "",
             "This action will run for ALL projects and cannot be undone.",
             "Do you want to continue?"
-          ].join("\\n");
+          ].filter(function(x) {{ return x !== ""; }}).join("\\n");
           if (!window.confirm(msg)) return;
 
           fetch("/api/clear-step", {{
@@ -5548,6 +5755,7 @@ def index():
         }}
 
         document.addEventListener("DOMContentLoaded", function() {{
+          applyStepButtonTooltips();
           let previewForm = document.getElementById("previewForm");
           let previewResult = document.getElementById("previewResult");
           let finalResult = document.getElementById("finalResult");
@@ -5721,12 +5929,13 @@ def index():
         var _siteEditorProject = "";
         var _siteEditorBase = null;
         var _siteEditorRawDirty = false;
-        var PROMPT_FORM_KEYS = ["a1_start", "a2_json", "a2_prompt", "a4_articles", "a5_pin_data", "a8_pin_bulk"];
+        var PROMPT_FORM_KEYS = ["a1_start", "a2_json", "a2_prompt", "a4_articles", "a5_pin_data", "a6b_pin_image_html", "a8_pin_bulk", "app_title_filter"];
         var _siteEditorPromptFieldSchema = null;
         function _promptGroupContainerId(pr) {{
           if (pr === "a1_start") return "ed_pr_sub_start";
           if (pr === "a2_json" || pr === "a2_prompt") return "ed_pr_sub_a2";
-          if (pr === "a4_articles" || pr === "a5_pin_data" || pr === "a8_pin_bulk") return "ed_pr_sub_pipe";
+          if (pr === "a4_articles" || pr === "a5_pin_data" || pr === "a6b_pin_image_html" || pr === "a8_pin_bulk") return "ed_pr_sub_pipe";
+          if (pr === "app_title_filter") return "ed_pr_sub_other";
           return "ed_pr_sub_other";
         }}
         function _promptFieldDomId(pr, path) {{ return "edpf_" + pr + "__" + String(path).replace(/\\./g, "__"); }}
@@ -5768,16 +5977,24 @@ def index():
             layerP.style.fontSize = "0.68rem";
             block.appendChild(layerP);
             var flist = sch[pr] || [];
+            var categorizeHdrShown = false;
             for (var fi = 0; fi < flist.length; fi++) {{
               var f = flist[fi];
               if (!f || !f.path) continue;
+              if (pr === "a5_pin_data" && f.group === "categorize" && !categorizeHdrShown) {{
+                categorizeHdrShown = true;
+                var catHdr = document.createElement("div");
+                catHdr.className = "alert alert-secondary py-2 px-2 small mb-2";
+                catHdr.innerHTML = "<strong>Recipe → WordPress category</strong> — title in, category name out. Edit <code>categorize.system</code> / <code>categorize.user</code> below. Category names come from <code>category_id_mapping</code> in Settings (<code>{{category_list}}</code> placeholder).";
+                block.appendChild(catHdr);
+              }}
               var pid = _promptFieldDomId(pr, f.path);
               var wrap = document.createElement("div");
               wrap.className = "mb-2";
               var lab = document.createElement("label");
               lab.className = "form-label small text-muted d-block mb-0";
               lab.setAttribute("for", pid);
-              lab.textContent = f.path + "  (" + (f.kind || "text") + ")";
+              lab.textContent = (f.label || f.path) + "  (" + (f.kind || "text") + ")";
               wrap.appendChild(lab);
               var el;
               var knd = f.kind || "text";
@@ -6280,21 +6497,21 @@ def index():
             <strong>Actions</strong>
           </div>
           <div class="card-body">
-            <button class="number-button" data-step="START" data-number="1" onclick="startAllStart(this)">START</button><button class="step-clear-button" type="button" onclick="clearStepAction('START')" title="Clear START and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="JSON" data-number="2" onclick="startLog('/stream-all-json', this)">JSON</button><button class="step-clear-button" type="button" onclick="clearStepAction('JSON')" title="Clear JSON and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="PROMPT" data-number="2" onclick="startLog('/stream-all-prompt', this)">PROMPT</button><button class="step-clear-button" type="button" onclick="clearStepAction('PROMPT')" title="Clear PROMPT and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="IMAGINE" data-number="ALL" onclick="startLog('/stream-imagine-all', this)">IMAGINE ALL</button><button class="step-clear-button" type="button" onclick="clearStepAction('IMAGINE')" title="Clear IMAGINE and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="IMAGINE" onclick="clearFailed()">CLEAR IMAGINE</button>
+            <button class="number-button" data-step="START" data-step-key="START" data-number="1" onclick="startAllStart(this)">START</button><button class="step-clear-button" type="button" data-clear-step="START" onclick="clearStepAction('START')">CLEAR</button>
+            <button class="number-button" data-step="JSON" data-step-key="JSON" data-number="2" onclick="startLog('/stream-all-json', this)">JSON</button><button class="step-clear-button" type="button" data-clear-step="JSON" onclick="clearStepAction('JSON')">CLEAR</button>
+            <button class="number-button" data-step="PROMPT" data-step-key="PROMPT" data-number="2" onclick="startLog('/stream-all-prompt', this)">PROMPT</button><button class="step-clear-button" type="button" data-clear-step="PROMPT" onclick="clearStepAction('PROMPT')">CLEAR</button>
+            <button class="number-button" data-step="IMAGINE" data-step-key="IMAGINE" data-number="ALL" onclick="startLog('/stream-imagine-all', this)">IMAGINE ALL</button><button class="step-clear-button" type="button" data-clear-step="IMAGINE" onclick="clearStepAction('IMAGINE')">CLEAR</button>
+            <button class="number-button" data-step="IMAGINE" data-step-key="CLEAR IMAGINE" onclick="clearFailed()">CLEAR IMAGINE</button>
 
             <!-- ARTICLES, PIN DATA, WP UPLOAD: كلهم 10 ب 10 -->
-            <button class="number-button" data-step="ARTICLE" data-number="9" onclick="startLog('/stream-all-article', this)">ARTICLE</button><button class="step-clear-button" type="button" onclick="clearStepAction('ARTICLE')" title="Clear ARTICLE and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="PIN DATA" data-number="10" onclick="startLog('/stream-all-pin-data', this)">PIN DATA</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN DATA')" title="Clear PIN DATA and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="PIN IMAGE" data-number="11" onclick="startLog('/stream-all-pin-image', this)">PIN IMAGE</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN IMAGE')" title="Clear PIN IMAGE and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="PIN IMAGE" data-number="11b" onclick="startLog('/stream-all-pin-image-html', this)" title="Render pins from per-project templates-html/*.html (Playwright)">PIN IMAGE HTML</button>
-            <button class="number-button" data-step="WP UPLOAD" data-number="12" onclick="startLog('/stream-all-wp-upload', this)">WP UPLOAD</button><button class="step-clear-button" type="button" onclick="clearStepAction('WP UPLOAD')" title="Clear WP UPLOAD and next dependent steps">CLEAR</button>
-            <button class="number-button" data-step="PIN DATA" data-number="13" onclick="startLog('/stream-all-pin-bulk', this)">PIN BULK</button><button class="step-clear-button" type="button" onclick="clearStepAction('PIN BULK')" title="Clear PIN BULK">CLEAR</button>
-            <button class="number-button" data-number="AUTO" onclick="startLog('/stream-all-auto-safe', this)">AUTO SAFE (ALL STEPS)</button>
-            <button class="number-button" type="button" onclick="clearAllLogs()">CLEAR ALL LOGS</button>
+            <button class="number-button" data-step="ARTICLE" data-step-key="ARTICLE" data-number="9" onclick="startLog('/stream-all-article', this)">ARTICLE</button><button class="step-clear-button" type="button" data-clear-step="ARTICLE" onclick="clearStepAction('ARTICLE')">CLEAR</button>
+            <button class="number-button" data-step="PIN DATA" data-step-key="PIN DATA" data-number="10" onclick="startLog('/stream-all-pin-data', this)">PIN DATA</button><button class="step-clear-button" type="button" data-clear-step="PIN DATA" onclick="clearStepAction('PIN DATA')">CLEAR</button>
+            <button class="number-button" data-step="PIN IMAGE" data-step-key="PIN IMAGE" data-number="11" onclick="startLog('/stream-all-pin-image', this)">PIN IMAGE</button><button class="step-clear-button" type="button" data-clear-step="PIN IMAGE" onclick="clearStepAction('PIN IMAGE')">CLEAR</button>
+            <button class="number-button" data-step="PIN IMAGE" data-step-key="PIN IMAGE HTML" data-number="11b" onclick="startLog('/stream-all-pin-image-html', this)">PIN IMAGE HTML</button>
+            <button class="number-button" data-step="WP UPLOAD" data-step-key="WP UPLOAD" data-number="12" onclick="startLog('/stream-all-wp-upload', this)">WP UPLOAD</button><button class="step-clear-button" type="button" data-clear-step="WP UPLOAD" onclick="clearStepAction('WP UPLOAD')">CLEAR</button>
+            <button class="number-button" data-step="PIN DATA" data-step-key="PIN BULK" data-number="13" onclick="startLog('/stream-all-pin-bulk', this)">PIN BULK</button><button class="step-clear-button" type="button" data-clear-step="PIN BULK" onclick="clearStepAction('PIN BULK')">CLEAR</button>
+            <button class="number-button" data-step-key="AUTO SAFE" data-number="AUTO" onclick="startLog('/stream-all-auto-safe', this)">AUTO SAFE (ALL STEPS)</button>
+            <button class="number-button" type="button" data-step-key="CLEAR ALL LOGS" onclick="clearAllLogs()">CLEAR ALL LOGS</button>
 
             <form action="/delete-all-folder" method="post" style="display:inline-block;">
               <button class="btn btn-secondary ms-2" type="submit">Delete 'ALL'</button>
@@ -6464,8 +6681,8 @@ def index():
                       <div id="ed_pr_sub_a2"></div>
                     </div>
                     <div class="tab-pane fade" id="pane-se-pp" role="tabpanel" aria-labelledby="tab-se-pp">
-                      <h6 class="text-secondary small text-uppercase">a4, a5, a8 — articles, pin data, pin bulk</h6>
-                      <p class="text-muted small mb-2">Pipeline prompts (ARTICLE, PIN DATA, PIN BULK on the dashboard). “Other” captures any future prompt name not listed above.</p>
+                      <h6 class="text-secondary small text-uppercase">a4, a5, a6b, a8 — articles, pin data, pin bulk</h6>
+                      <p class="text-muted small mb-2">Pipeline prompts (ARTICLE, PIN DATA, PIN IMAGES HTML, PIN BULK). Under <strong>a5_pin_data</strong>, the <strong>Recipe → WordPress category</strong> block classifies titles for WordPress. All prompt text lives in <code>config/prompts/*.json</code> — editable here per project. <strong>app_title_filter</strong> (under Other) filters bulk title uploads on the dashboard.</p>
                       <div id="ed_pr_sub_pipe" class="mb-2"></div>
                       <p id="ed_pr_sub_other_lbl" class="text-muted small d-none">Other script prompt(s) in the repo</p>
                       <div id="ed_pr_sub_other" class="mb-1"></div>
@@ -6506,6 +6723,9 @@ def index():
 
       </div>
       <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"></script>
+      <script>
+        if (typeof applyStepButtonTooltips === "function") applyStepButtonTooltips();
+      </script>
     </body>
     </html>
     """

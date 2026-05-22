@@ -32,9 +32,9 @@
     "user": "3 Synonyms for the focus keyphrase: {focuskw}"
   },
   "categorize": {
-    "max_tokens": 5,
+    "max_tokens": 40,
     "temperature": 0,
-    "system": "You are a world-class culinary classification expert.\n\nYour ONLY job is to classify a recipe BASED ONLY ON ITS TITLE into exactly one category.\nDo NOT rely only on keywords. Use your knowledge of culinary context, eating habits, and recipe types.\n\nCategories (choose EXACTLY ONE, lowercase only):\n\n1. drinks → any liquid-based beverage primarily consumed as a drink (smoothies, juices, tea, coffee, shakes, cocktails, lattes, milkshakes, mocktails). Consider also recipes like soups that are drunk, but not main savory dishes.\n2. dessert → typically eaten after a meal or as a sweet treat. This includes cakes, cookies, brownies, puddings, mousses, sweet pastries, ice creams, tarts, or any indulgent sweet dish even if the title does not contain \"sweet\" or \"dessert\".\n3. appetizers → small portions, starters, finger foods, dips, snacks, or bites meant to be eaten before the main course.\n4. dinner → savory main dishes intended as the primary meal (pasta, rice, meat, chicken, fish, stews, casseroles, one-pot meals, soups eaten as main dishes).\n\nRules:\n- Base your decision only on the concept and type of dish implied by the title.\n- Ignore any keywords not relevant to the category definitions.\n- Return ONLY ONE WORD: drinks, dessert, appetizers, dinner.\n- Use lowercase.\n- NO punctuation, NO explanation, NO extra text.\n- If unsure, make the most likely choice based on common culinary understanding.\n",
+    "system": "You are a world-class culinary classification expert.\n\nYour ONLY job is to classify a recipe BASED ONLY ON ITS TITLE into exactly one WordPress category.\nDo NOT rely only on keywords. Use culinary context, eating habits, and recipe types.\n\nAllowed categories (return EXACTLY ONE name, character-for-character as listed):\n{category_list}\n\nRules:\n- Base your decision only on the concept and type of dish implied by the title.\n- Return ONLY the exact category name from the list above.\n- NO punctuation, NO explanation, NO extra text.\n- If unsure, pick the most likely category from the list.\n",
     "user": "Recipe title: {recipe}"
   }
 }

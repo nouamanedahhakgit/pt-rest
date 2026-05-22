@@ -93,8 +93,12 @@ def repair_recipe_to_force_calories(recipe_text: str) -> str:
     ما كيزيدش أقسام أخرى.
     """
     p = _PROMPTS_A1.get("repair_recipe") or {}
-    system_msg = p.get("system", "")
-    user_msg = (p.get("user_template") or "").format(recipe_text=recipe_text)
+    system_msg = a1_config.require_prompt_string(_PROMPTS_A1, "repair_recipe", "system", bundle="a1_start")
+    user_msg = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PROMPTS_A1, "repair_recipe", "user_template", bundle="a1_start"),
+        bundle="a1_start",
+        recipe_text=recipe_text,
+    )
     resp = openai.ChatCompletion.create(
         model=MODEL,
         messages=[
@@ -113,8 +117,12 @@ def generate_recipe_from_title(title: str) -> str:
     title = str(title or "").strip()
 
     p = _PROMPTS_A1.get("generate_from_title") or {}
-    system_msg = p.get("system", "")
-    user_msg = (p.get("user_template") or "").format(title=title)
+    system_msg = a1_config.require_prompt_string(_PROMPTS_A1, "generate_from_title", "system", bundle="a1_start")
+    user_msg = a1_config.format_prompt_template(
+        a1_config.require_prompt_string(_PROMPTS_A1, "generate_from_title", "user_template", bundle="a1_start"),
+        bundle="a1_start",
+        title=title,
+    )
     resp = openai.ChatCompletion.create(
         model=MODEL,
         messages=[

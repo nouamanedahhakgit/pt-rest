@@ -71,21 +71,7 @@ def _generate_pin_texts(recipe_name: str, settings: dict, keys: dict) -> dict:
     lang = str(settings.get("article_language", "English"))
     prompts = a1_config.load_prompts("a6b_pin_image_html")
     sec = prompts.get("pin_texts") or {}
-
-    system = (sec.get("system") or
-              "You are a Pinterest visual content specialist. "
-              "Write bold scroll-stopping text for recipe pins in {language}. "
-              "Return ONLY valid JSON."
-              ).format(language=lang)
-
-    user = (sec.get("user") or
-            'Recipe: {recipe}\n\n'
-            'Generate in {language}:\n'
-            '- title: bold pin title, max 8 words\n'
-            '- hook: teaser, max 6 words (e.g. "Ready in 20 min!")\n'
-            '- text: tagline, max 10 words\n\n'
-            'Return ONLY: {{"title":"...","hook":"...","text":"..."}}'
-            ).format(recipe=recipe_name, language=lang)
+    system, user = a1_config.format_a6b_pin_texts(recipe_name, prompts=prompts, settings=settings)
 
     for attempt in range(3):
         try:

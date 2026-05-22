@@ -101,24 +101,11 @@ import openai_chat_compat  # noqa: E402
 openai_chat_compat.install()
 
 # Pinterest boards: config/settings.json -> pinterest_boards
-PINTEREST_BOARDS = list(
-    _S8.get("pinterest_boards")
-    or [
-        "Party Snacks & Finger Foods",
-        "Irresistible Desserts & Sweets",
-        "Cakes, Cookies & Treats",
-        "Healthy Dinner Inspiration",
-        "Family Dinner Ideas",
-        "Easy Recipes",
-        "Recipes to Make",
-        "Quick & Easy Dinner Recipes",
-        "Easy & Delicious Appetizers",
-        "Summer Drinks Inspiration",
-        "Smoothies, Juices & Mocktails",
-        "Refreshing Drinks & Beverages",
-        "Food cravings",
-    ]
-)
+PINTEREST_BOARDS = list(_S8.get("pinterest_boards") or [])
+if not PINTEREST_BOARDS:
+    raise RuntimeError(
+        "Missing pinterest_boards in settings (config/shared_settings.json, project settings, or site row)."
+    )
 
 # ==== المسارات (مطابقة للكود 1 فقط) ====
 INPUT_FILE = a1_config.all_output_join("Recipes.xlsx")
@@ -214,17 +201,11 @@ def generate_sequential_times(num_posts: int) -> list[str]:
 def categorize_article(article: str, api_key: str, boards: list[str]) -> str:
     try:
         pdef = _PP8.get("categorize_boards") or {}
-        prompt = (
-            pdef.get("user_intro", "")
-            + ", ".join(boards)
-            + pdef.get("user_mid", ".\n\nAnalyze the following article and categorize it into one of these Pinterest boards.\n\n")
-            + f"Article: {article}"
-            + pdef.get("user_suffix", "\n\nCategory:")
-        )
+        system, prompt = a1_config.format_a8_categorize_boards(article, boards, prompts=_PP8)
         resp = openai.ChatCompletion.create(
             model=a1_config.get_openai_model(_S8, _K8),
             messages=[
-                {"role": "system", "content": pdef.get("system", "You classify recipe/food texts into exactly ONE board from the list.")},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=int(pdef.get("max_tokens", 50)),
@@ -233,10 +214,10 @@ def categorize_article(article: str, api_key: str, boards: list[str]) -> str:
         category = resp.choices[0].message["content"].strip()
         if category in boards:
             return category
-        return "Recipes to Make"
+        return boards[0] if boards else "Recipes to Make"
     except Exception as e:
         print(f"Error categorizing article: {e}")
-        return "Recipes to Make"
+        return boards[0] if boards else "Recipes to Make"
 
 
 # ============================
