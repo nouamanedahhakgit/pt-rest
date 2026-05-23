@@ -1,5 +1,14 @@
 config/shared_keys.json
 config/shared_keys.json
 ALL/*
+<<<<<<< Updated upstream
 __pycache__/app.cpython-39.pyc
 A1-Pinterest_01/__pycache__/A.9-CF UPLOAD.cpython-39.pyc
+=======
+config/shared_keys.json
+config/shared_keys.json
+__pycache__/app.cpython-39.pyc
+A1-Pinterest_01/*
+config/sites.json
+ALL/A1-Pinterest_01-out/Recipes.xlsx
+>>>>>>> Stashed changes

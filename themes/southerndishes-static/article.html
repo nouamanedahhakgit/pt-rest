@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ article.title }} — {{ site.title }}</title>
+  <meta name="description" content="{{ article.meta_description or article.excerpt }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Karla:wght@300;400;500;600;700;800&family=Caveat:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="{{ article.title }}" />
+  <meta property="og:description" content="{{ article.meta_description or article.excerpt }}" />
+  {% if article.pinterest_image %}<meta property="og:image" content="{{ article.pinterest_image }}" />{% endif %}
+</head>
+<body>
+
+{% set active_category = article.category %}
+{% include "_header.html" %}
+
+<main class="wrap-text">
+  <nav class="breadcrumbs" aria-label="Breadcrumb">
+    <ol>
+      <li><a href="/">Home</a></li>
+      <li class="sep"><svg fill="currentColor" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M9.29 15.88L13.17 12 9.29 8.12a.996.996 0 1 1 1.41-1.41l4.59 4.59c.39.39.39 1.02 0 1.41L10.7 17.3a.996.996 0 0 1-1.41-1.42z"/></svg></li>
+      {% if article.category %}
+        <li><a href="/category/{{ article.category|slug }}/">{{ article.category }}</a></li>
+        <li class="sep"><svg fill="currentColor" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M9.29 15.88L13.17 12 9.29 8.12a.996.996 0 1 1 1.41-1.41l4.59 4.59c.39.39.39 1.02 0 1.41L10.7 17.3a.996.996 0 0 1-1.41-1.42z"/></svg></li>
+      {% endif %}
+      <li class="current">{{ article.title }}</li>
+    </ol>
+  </nav>
+
+  <article class="post-hero">
+    {% if article.category %}<span class="cat-pill-mini">{{ article.category }}</span>{% endif %}
+    <h1>{{ article.title }}</h1>
+
+    <!-- Author + meta -->
+    <div class="meta-row" style="gap:14px">
+      <a class="author-line" href="/author/{{ default_author.slug }}/">
+        {% if default_author.image_url %}<img src="{{ default_author.image_url }}" alt="{{ default_author.name }}"/>{% endif %}
+        <div>
+          <div class="role">By</div>
+          <div class="name">{{ default_author.name }}</div>
+        </div>
+      </a>
+      <span>{{ site.built_at }}</span>
+      <span class="dot"></span>
+      <span>~ 5 min read</span>
+    </div>
+
+    {% if article.featured_image %}
+    <figure class="post-featured">
+      <img src="{{ article.featured_image }}" alt="{{ article.title }}" loading="eager" />
+    </figure>
+    {% endif %}
+
+    <div class="post-body">
+      {{ article.html_body|safe }}
+    </div>
+
+    {% if article.ingredients or article.instructions %}
+    <div class="recipe-panel">
+      <div class="panel-head">
+        <h2>Recipe</h2>
+        <div class="panel-actions">
+          <a href="javascript:window.print()">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+            Print
+          </a>
+          {% if article.pinterest_image %}
+          <a class="pin-share" href="https://www.pinterest.com/pin/create/button/?url={{ article.url|urlencode }}&media={{ article.pinterest_image|urlencode }}&description={{ article.title|urlencode }}" target="_blank" rel="noopener">
+            <svg fill="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/></svg>
+            Pin it
+          </a>
+          {% endif %}
+        </div>
+      </div>
+      <div class="ing-cols">
+        {% if article.ingredients %}
+        <div>
+          <h3>Ingredients</h3>
+          <ul class="ing-list">
+            {% for ing in article.ingredients %}<li>{{ ing }}</li>{% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        {% if article.instructions %}
+        <div>
+          <h3>Instructions</h3>
+          <ol class="ins-list">
+            {% for step in article.instructions %}<li>{{ step }}</li>{% endfor %}
+          </ol>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if article.pinterest_image and article.pinterest_image != article.featured_image %}
+    <div class="post-pin">
+      <img src="{{ article.pinterest_image }}" alt="Pin: {{ article.title }}" />
+      <div class="caption">Save this recipe to Pinterest</div>
+    </div>
+    {% endif %}
+
+    {% if related %}
+    <section class="related">
+      <h2>You'll also love</h2>
+      <div class="recipes-grid">
+        {% for a in related[:3] %}{% include "_card.html" %}{% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <p style="margin-top:32px"><a href="/recipes/" class="btn btn-outline">&larr; All recipes</a></p>
+  </article>
+</main>
+
+{% include "_footer.html" %}
+</body>
+</html>

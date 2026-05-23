@@ -1,0 +1,54 @@
+<header class="site-header">
+  <div class="top-bar">
+    <div class="wrap top-bar-inner">
+      <a href="/page/about-us/"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>About Us</a>
+      <a href="/page/contact-us/"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>Contact Us</a>
+      <span class="divider"></span>
+      <a href="#" aria-label="Pinterest"><svg fill="currentColor" viewBox="0 0 24 24" style="width:18px;height:18px;color:var(--coral-600)"><path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/></svg></a>
+    </div>
+  </div>
+  <nav class="wrap main-nav">
+    <a class="brand" href="/">
+      <div>
+        <h1>{{ site.title }}</h1>
+        <p>{{ site.tagline }}</p>
+      </div>
+    </a>
+    <div class="nav-links">
+      <a href="/" {% if active_page == "home" %}class="active"{% endif %}>Home</a>
+      <a href="/recipes/" {% if active_page == "recipes" %}class="active"{% endif %}>Recipes</a>
+      {% for c in categories[:4] %}
+        <a href="/category/{{ c|slug }}/" {% if active_category == c %}class="active"{% endif %}>{{ c }}</a>
+      {% endfor %}
+    </div>
+    <div class="icon-buttons">
+      <button class="icon-btn" id="searchToggle" aria-label="Toggle search">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      </button>
+      <button class="icon-btn mobile-only" id="mobileMenuBtn" aria-label="Open menu">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </nav>
+  <div class="search-bar" id="searchBar">
+    <div class="wrap">
+      <form action="#" method="GET" onsubmit="return false;">
+        <div style="position:relative">
+          <svg class="search-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input type="search" name="q" placeholder="Search for recipes…" autocomplete="off" />
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="mobile-menu" id="mobileMenu">
+    <div class="mobile-menu-inner">
+      <a href="/">Home</a>
+      <a href="/recipes/">Recipes</a>
+      {% for c in categories[:4] %}<a href="/category/{{ c|slug }}/">{{ c }}</a>{% endfor %}
+      <div class="divider"></div>
+      <a href="/author/{{ default_author.slug }}/">About the Author</a>
+      <a href="/page/about-us/">About Us</a>
+      <a href="/page/contact-us/">Contact Us</a>
+    </div>
+  </div>
+</header>

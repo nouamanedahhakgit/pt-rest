@@ -257,6 +257,73 @@ def _use_json_sites() -> bool:
     return isinstance(s, list) and len(s) > 0
 
 
+# -------------------- Global themes (static-site themes for CF UPLOAD) --------------------
+_THEMES_DIR = os.path.join(_APP_ROOT, "themes")
+
+
+def _themes_dir() -> str:
+    return _THEMES_DIR
+
+
+def _list_theme_slugs() -> list:
+    """List subfolders of themes/ that contain a theme.json (sorted alphabetically)."""
+    root = _themes_dir()
+    if not os.path.isdir(root):
+        return []
+    out = []
+    for name in sorted(os.listdir(root)):
+        sub = os.path.join(root, name)
+        if not os.path.isdir(sub):
+            continue
+        if os.path.isfile(os.path.join(sub, "theme.json")):
+            out.append(name)
+    return out
+
+
+def _read_theme_meta(slug: str) -> dict:
+    """Return theme.json for a slug, augmented with on-disk file presence checks."""
+    slug = (slug or "").strip()
+    if not slug:
+        return {}
+    folder = os.path.join(_themes_dir(), slug)
+    meta_path = os.path.join(folder, "theme.json")
+    if not os.path.isfile(meta_path):
+        return {}
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    meta.setdefault("slug", slug)
+    meta.setdefault("display_name", slug)
+    meta["_folder"] = folder
+    meta["_has_index"] = os.path.isfile(os.path.join(folder, "index.html"))
+    meta["_has_article"] = os.path.isfile(os.path.join(folder, "article.html"))
+    meta["_has_static"] = os.path.isdir(os.path.join(folder, "static"))
+    return meta
+
+
+def _list_themes_full() -> list:
+    """All themes as dicts, including a synthesized 'valid' flag."""
+    out = []
+    for slug in _list_theme_slugs():
+        meta = _read_theme_meta(slug)
+        if not meta:
+            continue
+        meta["valid"] = bool(meta.get("_has_index") and meta.get("_has_article"))
+        out.append(meta)
+    return out
+
+
+def _theme_exists(slug: str) -> bool:
+    slug = (slug or "").strip()
+    if not slug:
+        return False
+    return slug in set(_list_theme_slugs())
+
+
 def _pipeline_code_folder() -> str:
     return (str(_load_sites_file_app().get("pipeline_code_folder") or "A1-Pinterest_01").strip() or "A1-Pinterest_01")
 
@@ -1458,6 +1525,10 @@ _SITE_FORM_STRING_KEYS = (
     "wordpress_url",
     "wordpress_user",
     "wordpress_app_password",
+    "theme_slug",
+    "cloudflare_api_token",
+    "cloudflare_account_id",
+    "cloudflare_project_name",
 )
 
 # If user leaves these blank in the form, keep previous file values (same as password UX)
@@ -1471,6 +1542,8 @@ _SITE_SECRET_REUSE_KEYS = (
     "r2_bucket",
     "r2_public_base_url",
     "wordpress_app_password",
+    "cloudflare_api_token",
+    "cloudflare_account_id",
 )
 
 
@@ -1496,7 +1569,7 @@ def _ensure_project_output_files_for_sites(doc: Optional[dict] = None) -> None:
     pipeline_folder = ""
     if isinstance(d, dict):
         pipeline_folder = str(d.get("pipeline_code_folder", "") or "").strip() or "A1-Pinterest_01"
-    template_source_dir = os.path.join(_APP_ROOT, pipeline_folder, "templates")
+    pipeline_root = os.path.join(_APP_ROOT, pipeline_folder)
 
     for s in sites:
         if not isinstance(s, dict):
@@ -1535,15 +1608,41 @@ def _ensure_project_output_files_for_sites(doc: Optional[dict] = None) -> None:
             finally:
                 wb.close()
 
-        templates_sub = str(s.get("templates_dir", "") or "").strip() or "templates"
-        templates_sub = os.path.basename(templates_sub) or "templates"
+        templates_sub = str(s.get("templates_dir", "") or "").strip() or "templates-html"
+        templates_sub = os.path.basename(templates_sub) or "templates-html"
         target_templates_dir = os.path.join(target_dir, templates_sub)
         os.makedirs(target_templates_dir, exist_ok=True)
-        if os.path.isdir(template_source_dir):
+
+        # Source folder name matches the site's templates_dir setting first
+        # (so projects using "templates-html" get the html templates, and
+        # projects using "templates" get the legacy ones). Falls back to the
+        # other if the primary doesn't exist on the source side.
+        source_candidates = [templates_sub]
+        if templates_sub not in ("templates", "templates-html"):
+            source_candidates += ["templates-html", "templates"]
+        elif templates_sub == "templates-html":
+            source_candidates += ["templates"]
+        else:
+            source_candidates += ["templates-html"]
+
+        template_source_dir = ""
+        for cand in source_candidates:
+            p = os.path.join(pipeline_root, cand)
+            if os.path.isdir(p):
+                template_source_dir = p
+                break
+
+        if template_source_dir and os.path.isdir(template_source_dir):
             for nm in os.listdir(template_source_dir):
                 src = os.path.join(template_source_dir, nm)
                 dst = os.path.join(target_templates_dir, nm)
-                if os.path.isfile(src) and not os.path.exists(dst):
+                if os.path.isdir(src):
+                    if not os.path.exists(dst):
+                        try:
+                            shutil.copytree(src, dst)
+                        except OSError:
+                            pass
+                elif os.path.isfile(src) and not os.path.exists(dst):
                     try:
                         shutil.copy2(src, dst)
                     except OSError:
@@ -2974,6 +3073,7 @@ def stream_single():
         "pin_image_html": "A.6b-PIN IMAGES HTML.py",
         "wp_upload": "A.7-WP UPLOAD.py",
         "pin_bulk": "A.8-PIN BULK.py",
+        "cf_upload": "A.9-CF UPLOAD.py",
         "start2": "A.1-START.py"
     }
     script = action_to_script.get(action)
@@ -3133,6 +3233,278 @@ def api_site_editor():
     except OSError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True, "message": "config/sites.json updated for this project row."})
+
+
+# -------------------- Themes API --------------------
+@app.route("/api/themes")
+def api_themes():
+    """List all available global themes from themes/<slug>/theme.json."""
+    themes = _list_themes_full()
+    safe = []
+    for t in themes:
+        safe.append(
+            {
+                "slug": t.get("slug"),
+                "display_name": t.get("display_name") or t.get("slug"),
+                "description": t.get("description") or "",
+                "version": t.get("version") or "",
+                "author": t.get("author") or "",
+                "cf_project_name": t.get("cf_project_name") or "",
+                "valid": bool(t.get("valid")),
+                "has_index": bool(t.get("_has_index")),
+                "has_article": bool(t.get("_has_article")),
+                "has_static": bool(t.get("_has_static")),
+            }
+        )
+    return jsonify({"ok": True, "themes": safe, "count": len(safe)})
+
+
+@app.route("/api/project-theme", methods=["GET", "POST"])
+def api_project_theme():
+    """
+    GET ?project=<label>  -> { theme_slug, cf_project_name, cf_button_enabled, reasons[] }
+    POST JSON { project, theme_slug, cloudflare_project_name? } -> writes to sites.json
+    """
+    if request.method == "GET":
+        project = (request.args.get("project") or "").strip()
+        if not project or not is_allowed_project_label(project):
+            return jsonify({"error": "Unknown project"}), 404
+        idx = _site_index_by_project_label(project)
+        if idx is None:
+            return jsonify({"error": "Project not found in sites.json"}), 404
+        sites = _load_sites_file_app().get("sites") or []
+        row = sites[idx] if 0 <= idx < len(sites) and isinstance(sites[idx], dict) else {}
+        theme_slug = str(row.get("theme_slug") or "").strip()
+        cf_project_name = str(row.get("cloudflare_project_name") or "").strip()
+
+        shared = _load_shared_keys_app()
+        global_token = str(shared.get("cloudflare_api_token") or "").strip()
+        global_account = str(shared.get("cloudflare_account_id") or "").strip()
+        per_token = str(row.get("cloudflare_api_token") or "").strip()
+        per_account = str(row.get("cloudflare_account_id") or "").strip()
+
+        effective_cf_project = cf_project_name
+        if not effective_cf_project and theme_slug:
+            meta = _read_theme_meta(theme_slug)
+            effective_cf_project = str(meta.get("cf_project_name") or "").strip()
+
+        effective_token = per_token or global_token
+        effective_account = per_account or global_account
+
+        reasons = []
+        if not theme_slug:
+            reasons.append("No theme selected for this project.")
+        elif not _theme_exists(theme_slug):
+            reasons.append(f"Selected theme '{theme_slug}' no longer exists in themes/.")
+        if not effective_cf_project:
+            reasons.append("No Cloudflare Pages project name set (on project or theme).")
+        if not effective_token:
+            reasons.append("No Cloudflare API token (set globally in shared_keys.json or override per project).")
+        if not effective_account:
+            reasons.append("No Cloudflare account_id (set globally in shared_keys.json or override per project).")
+
+        return jsonify(
+            {
+                "ok": True,
+                "project": project,
+                "theme_slug": theme_slug,
+                "cloudflare_project_name": cf_project_name,
+                "effective_cf_project_name": effective_cf_project,
+                "cf_button_enabled": len(reasons) == 0,
+                "reasons": reasons,
+                "has_global_cf_token": bool(global_token),
+                "has_global_cf_account": bool(global_account),
+                "has_project_cf_override": bool(per_token or per_account),
+            }
+        )
+
+    # POST
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Send JSON: { project, theme_slug }"}), 400
+    project = (data.get("project") or "").strip()
+    if not project or not is_allowed_project_label(project):
+        return jsonify({"error": "Unknown project"}), 404
+    theme_slug = (data.get("theme_slug") or "").strip()
+    if theme_slug and not _theme_exists(theme_slug):
+        return jsonify({"error": f"Theme '{theme_slug}' not found in themes/"}), 400
+    cf_name = data.get("cloudflare_project_name")
+    cf_name_set = "cloudflare_project_name" in data
+    cf_token = data.get("cloudflare_api_token")
+    cf_token_set = "cloudflare_api_token" in data
+    cf_account = data.get("cloudflare_account_id")
+    cf_account_set = "cloudflare_account_id" in data
+
+    doc = _load_sites_file_app()
+    sites = doc.get("sites") if isinstance(doc, dict) else None
+    if not isinstance(sites, list):
+        return jsonify({"error": "sites.json has no sites array"}), 500
+    idx = _site_index_by_project_label(project)
+    if idx is None or idx >= len(sites):
+        return jsonify({"error": "Project row not found in sites.json"}), 404
+    row = sites[idx] if isinstance(sites[idx], dict) else {}
+    if theme_slug:
+        row["theme_slug"] = theme_slug
+    else:
+        row.pop("theme_slug", None)
+    if cf_name_set:
+        v = str(cf_name or "").strip()
+        if v:
+            row["cloudflare_project_name"] = v
+        else:
+            row.pop("cloudflare_project_name", None)
+    if cf_token_set:
+        v = str(cf_token or "").strip()
+        if v:
+            row["cloudflare_api_token"] = v
+        else:
+            row.pop("cloudflare_api_token", None)
+    if cf_account_set:
+        v = str(cf_account or "").strip()
+        if v:
+            row["cloudflare_account_id"] = v
+        else:
+            row.pop("cloudflare_account_id", None)
+    sites[idx] = row
+    doc["sites"] = sites
+    doc.setdefault("pipeline_code_folder", "A1-Pinterest_01")
+    try:
+        _write_sites_doc(doc)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "message": "Theme / Cloudflare config saved to sites.json."})
+
+
+def _load_shared_keys_app() -> dict:
+    """Load config/shared_keys.json (best-effort)."""
+    path = os.path.join(_APP_CONFIG, "shared_keys.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _resolve_cf_creds_for_project(project: str) -> dict:
+    """Returns { token, account_id, project_name, errors[] } for the given project label."""
+    out = {"token": "", "account_id": "", "project_name": "", "errors": []}
+    if not project or not is_allowed_project_label(project):
+        out["errors"].append("Unknown project")
+        return out
+    idx = _site_index_by_project_label(project)
+    sites = _load_sites_file_app().get("sites") or []
+    if idx is None or idx >= len(sites) or not isinstance(sites[idx], dict):
+        out["errors"].append("Project not found in sites.json")
+        return out
+    row = sites[idx]
+    shared = _load_shared_keys_app()
+    out["token"] = (str(row.get("cloudflare_api_token") or "").strip()
+                    or str(shared.get("cloudflare_api_token") or "").strip())
+    out["account_id"] = (str(row.get("cloudflare_account_id") or "").strip()
+                         or str(shared.get("cloudflare_account_id") or "").strip())
+    name = str(row.get("cloudflare_project_name") or "").strip()
+    if not name:
+        slug = str(row.get("theme_slug") or "").strip()
+        if slug:
+            meta = _read_theme_meta(slug)
+            name = str(meta.get("cf_project_name") or "").strip()
+    out["project_name"] = name
+    if not out["token"]:
+        out["errors"].append("Missing Cloudflare API token")
+    if not out["account_id"]:
+        out["errors"].append("Missing Cloudflare account_id")
+    if not out["project_name"]:
+        out["errors"].append("Missing Cloudflare Pages project name")
+    return out
+
+
+def _cf_api(method: str, path: str, token: str, **kwargs) -> tuple:
+    """
+    Call the Cloudflare REST API. Returns (status_code, parsed_json_or_text).
+    """
+    import requests as _requests
+    url = "https://api.cloudflare.com/client/v4" + path
+    headers = kwargs.pop("headers", {}) or {}
+    headers.setdefault("Authorization", f"Bearer {token}")
+    headers.setdefault("Accept", "application/json")
+    try:
+        r = _requests.request(method, url, headers=headers, timeout=30, **kwargs)
+    except Exception as e:
+        return 0, {"error": f"network: {e}"}
+    try:
+        return r.status_code, r.json()
+    except Exception:
+        return r.status_code, {"raw": r.text}
+
+
+@app.route("/api/cf-deployments")
+def api_cf_deployments():
+    """List Cloudflare Pages deployments for the project (max ~25 most recent)."""
+    project = (request.args.get("project") or "").strip()
+    creds = _resolve_cf_creds_for_project(project)
+    if creds["errors"]:
+        return jsonify({"ok": False, "error": "; ".join(creds["errors"])}), 400
+    path = f"/accounts/{creds['account_id']}/pages/projects/{creds['project_name']}/deployments?per_page=25"
+    status, body = _cf_api("GET", path, creds["token"])
+    if status >= 400 or not isinstance(body, dict) or not body.get("success", False):
+        msg = "Cloudflare API error"
+        if isinstance(body, dict):
+            errs = body.get("errors") or []
+            if errs and isinstance(errs[0], dict):
+                msg = errs[0].get("message") or msg
+        return jsonify({"ok": False, "error": f"{msg} (HTTP {status})", "raw": body}), 502
+    results = body.get("result") or []
+    deployments = []
+    for d in results:
+        if not isinstance(d, dict):
+            continue
+        dep_id = str(d.get("id") or "")
+        latest_stage = ""
+        stages = d.get("latest_stage")
+        if isinstance(stages, dict):
+            latest_stage = str(stages.get("name") or "")
+        deployments.append(
+            {
+                "id": dep_id,
+                "short_id": dep_id[:8],
+                "url": d.get("url") or "",
+                "environment": d.get("environment") or "",
+                "is_production": (d.get("environment") == "production"),
+                "created_on": d.get("created_on") or "",
+                "modified_on": d.get("modified_on") or "",
+                "stage": latest_stage,
+                "deployment_trigger": ((d.get("deployment_trigger") or {}).get("type") or ""),
+            }
+        )
+    return jsonify({"ok": True, "project": project, "cf_project_name": creds["project_name"], "deployments": deployments})
+
+
+@app.route("/api/cf-rollback", methods=["POST"])
+def api_cf_rollback():
+    """Promote a previous Pages deployment to production (Cloudflare rollback API)."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Send JSON: { project, deployment_id }"}), 400
+    project = (data.get("project") or "").strip()
+    deployment_id = (data.get("deployment_id") or "").strip()
+    if not deployment_id:
+        return jsonify({"ok": False, "error": "deployment_id is required"}), 400
+    creds = _resolve_cf_creds_for_project(project)
+    if creds["errors"]:
+        return jsonify({"ok": False, "error": "; ".join(creds["errors"])}), 400
+    path = f"/accounts/{creds['account_id']}/pages/projects/{creds['project_name']}/deployments/{deployment_id}/rollback"
+    status, body = _cf_api("POST", path, creds["token"])
+    if status >= 400 or not isinstance(body, dict) or not body.get("success", False):
+        msg = "Cloudflare API error"
+        if isinstance(body, dict):
+            errs = body.get("errors") or []
+            if errs and isinstance(errs[0], dict):
+                msg = errs[0].get("message") or msg
+        return jsonify({"ok": False, "error": f"{msg} (HTTP {status})", "raw": body}), 502
+    return jsonify({"ok": True, "message": "Rolled back to deployment.", "result": body.get("result")})
 
 
 @app.route("/api/project-stats")
@@ -3790,6 +4162,22 @@ def manage_recipes():
 def stream_all_wp_upload():
     return Response(
         generate_log_pool(jobs_for_script("A.7-WP UPLOAD.py"), max_concurrency=10),
+        mimetype="text/event-stream"
+    )
+
+
+# -------------------- CF UPLOAD ALL (pool 4-by-4) --------------------
+@app.route("/stream-all-cf-upload")
+def stream_all_cf_upload():
+    """
+    Deploy every configured project to Cloudflare Pages. Each project runs
+    A.9-CF UPLOAD.py in its own subprocess. The script itself short-circuits
+    with a clear log line for projects that don't have a theme_slug or
+    cloudflare_project_name configured.
+    Pool is small (4) since each wrangler invocation hits the CF API hard.
+    """
+    return Response(
+        generate_log_pool(jobs_for_script("A.9-CF UPLOAD.py"), max_concurrency=4),
         mimetype="text/event-stream"
     )
 
@@ -4671,6 +5059,15 @@ def index():
               </div>
               <div class="card-body overflow-auto" style="height:200px;" id="log_{lid}"></div>
               <div class="card-footer">
+                <div class="theme-row d-flex align-items-center flex-wrap gap-2 mb-2" data-project={titlej}>
+                  <label class="small text-muted mb-0 me-1">Theme:</label>
+                  <select class="form-select form-select-sm theme-picker" style="max-width:200px;" data-project={titlej} data-log-id={lidj}>
+                    <option value="">— none —</option>
+                  </select>
+                  <input type="text" class="form-control form-control-sm cf-project-input" placeholder="CF Pages project name (optional override)" style="max-width:260px;" data-project={titlej} />
+                  <button type="button" class="btn btn-sm btn-outline-secondary theme-save-btn" data-project={titlej} title="Save theme + CF project name to sites.json">Save</button>
+                  <span class="theme-status small text-muted" data-project={titlej}></span>
+                </div>
                 <button class="btn btn-sm btn-primary project-action" data-action="start" data-step-key="START" onclick='startProjectAction({lidj}, {titlej}, "start", this)'>START</button>
                 <button class="btn btn-sm btn-secondary project-action" data-action="json" data-step-key="JSON" onclick='startProjectAction({lidj}, {titlej}, "json", this)'>JSON</button>
                 <button class="btn btn-sm btn-warning project-action" data-action="prompt" data-step-key="PROMPT" onclick='startProjectAction({lidj}, {titlej}, "prompt", this)'>PROMPT</button>
@@ -4681,6 +5078,8 @@ def index():
                 <button class="btn btn-sm btn-dark project-action" data-action="pin_image_html" data-step-key="PIN IMAGE HTML" onclick='startProjectAction({lidj}, {titlej}, "pin_image_html", this)'>PIN IMAGE HTML</button>
                 <button class="btn btn-sm btn-dark project-action" data-action="wp_upload" data-step-key="WP UPLOAD" onclick='startProjectAction({lidj}, {titlej}, "wp_upload", this)'>WP UPLOAD</button>
                 <button class="btn btn-sm btn-dark project-action" data-action="pin_bulk" data-step-key="PIN BULK" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
+                <button class="btn btn-sm cf-upload-btn project-action" data-action="cf_upload" data-step-key="CF UPLOAD" data-project={titlej} disabled title="Select a theme and set Cloudflare Pages project name to enable" onclick='startProjectAction({lidj}, {titlej}, "cf_upload", this)' style="background:#f48120;color:#fff;border:1px solid #d96e10;">CF UPLOAD</button>
+                <button class="btn btn-sm btn-outline-warning cf-versions-btn" data-project={titlej} data-log-id={lidj} disabled title="Show recent Cloudflare Pages deployments" onclick='showCfVersions({titlej}, {lidj})'>Versions</button>
                 <button class="btn btn-sm btn-outline-danger project-clear-log" data-step-key="CLEAR PROJECT LOG" onclick='clearProjectLog({lidj})'>CLEAR LOG</button>
               </div>
             </div>
@@ -4799,17 +5198,6 @@ def index():
           animation: runningGlowPulse 1.2s ease-in-out infinite;
           border-color: #ffc107 !important;
         }}
-        .step-clear-button {{
-          margin-left: 6px;
-          padding: 7px 10px;
-          border-radius: 8px;
-          border: 1px solid #d9534f;
-          background: #fff5f5;
-          color: #b42318;
-          font-weight: 700;
-          cursor: pointer;
-        }}
-        .step-clear-button:hover {{ background: #ffe3e3; }}
         .tooltip.step-col-tooltip .tooltip-inner {{
           max-width: min(480px, 92vw);
           text-align: left;
@@ -4991,13 +5379,6 @@ def index():
               btn.setAttribute("data-step-key", step);
               _attachStepTooltip(btn, _runStepTooltip(step));
             }}
-          }});
-          document.querySelectorAll(".step-clear-button").forEach(function(btn) {{
-            var oc = btn.getAttribute("onclick") || "";
-            var m = oc.match(/clearStepAction\\('([^']+)'\\)/);
-            if (!m) return;
-            btn.setAttribute("data-clear-step", m[1]);
-            _attachStepTooltip(btn, _clearStepTooltip(m[1]));
           }});
         }}
         var numXlsx = {num_xlsx};
@@ -5874,7 +6255,8 @@ def index():
             pin_image: "/stream-all-pin-image",
             pin_image_html: "/stream-all-pin-image-html",
             wp_upload: "/stream-all-wp-upload",
-            pin_bulk: "/stream-all-pin-bulk"
+            pin_bulk: "/stream-all-pin-bulk",
+            cf_upload: "/stream-cf-upload"
           }};
           var depEndpoint = endpointByAction[action] || "";
           buttons.forEach(function(b) {{ b.disabled = true; }});
@@ -6428,6 +6810,139 @@ def index():
             .then(function() {{ alert("Saved to config/sites.json. Refresh the page if the label changed."); }})
             .catch(function(e) {{ alert("Save failed: " + e); }});
         }}
+        // -------------------- Themes + Cloudflare UI --------------------
+        var _availableThemes = [];
+        function loadThemesIntoAllPickers() {{
+          return fetch("/api/themes").then(function(r) {{ return r.json(); }}).then(function(j) {{
+            _availableThemes = (j && j.themes) || [];
+            document.querySelectorAll("select.theme-picker").forEach(function(sel) {{
+              var current = sel.getAttribute("data-current") || "";
+              sel.innerHTML = "";
+              var optBlank = document.createElement("option");
+              optBlank.value = "";
+              optBlank.textContent = "— none —";
+              sel.appendChild(optBlank);
+              _availableThemes.forEach(function(t) {{
+                var o = document.createElement("option");
+                o.value = t.slug;
+                o.textContent = (t.display_name || t.slug) + (t.valid ? "" : " (incomplete)");
+                if (!t.valid) o.disabled = true;
+                sel.appendChild(o);
+              }});
+              if (current) sel.value = current;
+            }});
+          }}).catch(function(){{ /* silent */ }});
+        }}
+        function refreshProjectThemeState(project) {{
+          if (!project) return Promise.resolve();
+          var enc = encodeURIComponent(project);
+          return fetch("/api/project-theme?project=" + enc).then(function(r) {{ return r.json(); }}).then(function(j) {{
+            if (!j || !j.ok) return;
+            var sel = document.querySelector('select.theme-picker[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+            if (sel) {{
+              sel.setAttribute("data-current", j.theme_slug || "");
+              if (j.theme_slug) sel.value = j.theme_slug; else sel.value = "";
+            }}
+            var inp = document.querySelector('input.cf-project-input[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+            if (inp) inp.value = j.cloudflare_project_name || "";
+            var st = document.querySelector('.theme-status[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+            if (st) {{
+              if (j.cf_button_enabled) {{
+                st.textContent = "✓ ready to deploy → " + (j.effective_cf_project_name || "");
+                st.classList.remove("text-danger");
+                st.classList.add("text-success");
+              }} else {{
+                st.textContent = (j.reasons && j.reasons[0]) || "Not deployable.";
+                st.classList.add("text-danger");
+                st.classList.remove("text-success");
+              }}
+            }}
+            var cfBtn = document.querySelector('button.cf-upload-btn[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+            if (cfBtn) {{
+              cfBtn.disabled = !j.cf_button_enabled;
+              cfBtn.title = j.cf_button_enabled
+                ? "Build theme + deploy to Cloudflare Pages (creates new version)"
+                : ((j.reasons || []).join(" · ") || "Not deployable");
+            }}
+            var verBtn = document.querySelector('button.cf-versions-btn[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+            if (verBtn) {{
+              verBtn.disabled = !(j.effective_cf_project_name && (j.has_global_cf_token || j.has_project_cf_override));
+            }}
+          }}).catch(function(){{ /* silent */ }});
+        }}
+        function saveProjectTheme(project) {{
+          if (!project) return;
+          var sel = document.querySelector('select.theme-picker[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+          var inp = document.querySelector('input.cf-project-input[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+          var payload = {{ project: project, theme_slug: (sel ? sel.value : ""), cloudflare_project_name: (inp ? inp.value.trim() : "") }};
+          var btn = document.querySelector('.theme-save-btn[data-project="' + project.replace(/"/g, '\\\\"') + '"]');
+          if (btn) {{ btn.disabled = true; btn.textContent = "Saving…"; }}
+          fetch("/api/project-theme", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload)
+          }}).then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error(j.error || r.status); return j; }}); }})
+            .then(function() {{ return refreshProjectThemeState(project); }})
+            .catch(function(e) {{ alert("Save failed: " + e); }})
+            .finally(function() {{ if (btn) {{ btn.disabled = false; btn.textContent = "Save"; }} }});
+        }}
+        function _bindThemeUI() {{
+          document.querySelectorAll(".theme-save-btn").forEach(function(b) {{
+            if (b.__themeBound) return;
+            b.__themeBound = true;
+            b.addEventListener("click", function() {{ saveProjectTheme(b.getAttribute("data-project") || ""); }});
+          }});
+          document.querySelectorAll("select.theme-picker").forEach(function(s) {{
+            if (s.__themeBound) return;
+            s.__themeBound = true;
+            // No autosave; user clicks Save. But keep status synced if user already had it saved.
+          }});
+        }}
+        function showCfVersions(project, logId) {{
+          if (!project) return;
+          var enc = encodeURIComponent(project);
+          fetch("/api/cf-deployments?project=" + enc).then(function(r) {{ return r.json(); }}).then(function(j) {{
+            var dlg = document.getElementById("cfVersionsModal");
+            var body = document.getElementById("cfVersionsBody");
+            var title = document.getElementById("cfVersionsTitle");
+            if (title) title.textContent = "Cloudflare versions · " + project;
+            if (!body) return;
+            if (!j || !j.ok) {{ body.innerHTML = '<div class="alert alert-warning">' + ((j && j.error) || "Could not load deployments") + '</div>'; }}
+            else if (!j.deployments || !j.deployments.length) {{ body.innerHTML = '<div class="text-muted">No deployments yet.</div>'; }}
+            else {{
+              var rows = j.deployments.map(function(d) {{
+                var prod = d.is_production ? '<span class="badge bg-success">production</span>' : '';
+                var url = d.url ? '<a href="' + d.url + '" target="_blank" rel="noopener">' + d.url + '</a>' : '';
+                var disabled = d.is_production ? 'disabled' : '';
+                return '<tr>'
+                  + '<td><code>' + (d.short_id || d.id || '') + '</code> ' + prod + '</td>'
+                  + '<td class="small text-muted">' + (d.created_on || '') + '</td>'
+                  + '<td>' + url + '</td>'
+                  + '<td><button class="btn btn-sm btn-outline-primary" ' + disabled
+                  + ' onclick=\\'cfRollback("' + project.replace(/"/g, '\\\\"') + '","' + (d.id || '') + '")\\'>Make production</button></td>'
+                  + '</tr>';
+              }}).join("");
+              body.innerHTML = '<table class="table table-sm"><thead><tr><th>ID</th><th>Date</th><th>URL</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+            }}
+            if (dlg && window.bootstrap && window.bootstrap.Modal) {{
+              (new window.bootstrap.Modal(dlg)).show();
+            }}
+          }}).catch(function(e) {{ alert("Versions load failed: " + e); }});
+        }}
+        function cfRollback(project, deploymentId) {{
+          if (!project || !deploymentId) return;
+          if (!confirm("Promote deployment " + deploymentId.slice(0, 8) + " to production for " + project + "?")) return;
+          fetch("/api/cf-rollback", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ project: project, deployment_id: deploymentId }})
+          }}).then(function(r) {{ return r.json().then(function(j) {{ if (!r.ok) throw new Error(j.error || r.status); return j; }}); }})
+            .then(function() {{ showCfVersions(project, ""); }})
+            .catch(function(e) {{ alert("Rollback failed: " + e); }});
+        }}
+        window.showCfVersions = showCfVersions;
+        window.cfRollback = cfRollback;
+
         document.addEventListener("DOMContentLoaded", function() {{
           refreshAllProjectStats();
           refreshActionButtonStates();
@@ -6447,6 +6962,12 @@ def index():
           if (fp) fp.addEventListener("input", function() {{ _siteEditorRawDirty = false; }}, true);
           var taR = document.getElementById("siteEditorRaw");
           if (taR) taR.addEventListener("input", function() {{ _siteEditorRawDirty = true; }});
+
+          // Themes / Cloudflare bootstrap
+          _bindThemeUI();
+          loadThemesIntoAllPickers().then(function() {{
+            (projectUnits || []).forEach(function(u) {{ refreshProjectThemeState(u.label); }});
+          }});
         }});
       </script>
     </head>
@@ -6497,19 +7018,19 @@ def index():
             <strong>Actions</strong>
           </div>
           <div class="card-body">
-            <button class="number-button" data-step="START" data-step-key="START" data-number="1" onclick="startAllStart(this)">START</button><button class="step-clear-button" type="button" data-clear-step="START" onclick="clearStepAction('START')">CLEAR</button>
-            <button class="number-button" data-step="JSON" data-step-key="JSON" data-number="2" onclick="startLog('/stream-all-json', this)">JSON</button><button class="step-clear-button" type="button" data-clear-step="JSON" onclick="clearStepAction('JSON')">CLEAR</button>
-            <button class="number-button" data-step="PROMPT" data-step-key="PROMPT" data-number="2" onclick="startLog('/stream-all-prompt', this)">PROMPT</button><button class="step-clear-button" type="button" data-clear-step="PROMPT" onclick="clearStepAction('PROMPT')">CLEAR</button>
-            <button class="number-button" data-step="IMAGINE" data-step-key="IMAGINE" data-number="ALL" onclick="startLog('/stream-imagine-all', this)">IMAGINE ALL</button><button class="step-clear-button" type="button" data-clear-step="IMAGINE" onclick="clearStepAction('IMAGINE')">CLEAR</button>
+            <button class="number-button" data-step="START" data-step-key="START" data-number="1" onclick="startAllStart(this)">START</button>
+            <button class="number-button" data-step="JSON" data-step-key="JSON" data-number="2" onclick="startLog('/stream-all-json', this)">JSON</button>
+            <button class="number-button" data-step="PROMPT" data-step-key="PROMPT" data-number="2" onclick="startLog('/stream-all-prompt', this)">PROMPT</button>
+            <button class="number-button" data-step="IMAGINE" data-step-key="IMAGINE" data-number="ALL" onclick="startLog('/stream-imagine-all', this)">IMAGINE ALL</button>
             <button class="number-button" data-step="IMAGINE" data-step-key="CLEAR IMAGINE" onclick="clearFailed()">CLEAR IMAGINE</button>
 
-            <!-- ARTICLES, PIN DATA, WP UPLOAD: كلهم 10 ب 10 -->
-            <button class="number-button" data-step="ARTICLE" data-step-key="ARTICLE" data-number="9" onclick="startLog('/stream-all-article', this)">ARTICLE</button><button class="step-clear-button" type="button" data-clear-step="ARTICLE" onclick="clearStepAction('ARTICLE')">CLEAR</button>
-            <button class="number-button" data-step="PIN DATA" data-step-key="PIN DATA" data-number="10" onclick="startLog('/stream-all-pin-data', this)">PIN DATA</button><button class="step-clear-button" type="button" data-clear-step="PIN DATA" onclick="clearStepAction('PIN DATA')">CLEAR</button>
-            <button class="number-button" data-step="PIN IMAGE" data-step-key="PIN IMAGE" data-number="11" onclick="startLog('/stream-all-pin-image', this)">PIN IMAGE</button><button class="step-clear-button" type="button" data-clear-step="PIN IMAGE" onclick="clearStepAction('PIN IMAGE')">CLEAR</button>
+            <button class="number-button" data-step="ARTICLE" data-step-key="ARTICLE" data-number="9" onclick="startLog('/stream-all-article', this)">ARTICLE</button>
+            <button class="number-button" data-step="PIN DATA" data-step-key="PIN DATA" data-number="10" onclick="startLog('/stream-all-pin-data', this)">PIN DATA</button>
+            <button class="number-button" data-step="PIN IMAGE" data-step-key="PIN IMAGE" data-number="11" onclick="startLog('/stream-all-pin-image', this)">PIN IMAGE</button>
             <button class="number-button" data-step="PIN IMAGE" data-step-key="PIN IMAGE HTML" data-number="11b" onclick="startLog('/stream-all-pin-image-html', this)">PIN IMAGE HTML</button>
-            <button class="number-button" data-step="WP UPLOAD" data-step-key="WP UPLOAD" data-number="12" onclick="startLog('/stream-all-wp-upload', this)">WP UPLOAD</button><button class="step-clear-button" type="button" data-clear-step="WP UPLOAD" onclick="clearStepAction('WP UPLOAD')">CLEAR</button>
-            <button class="number-button" data-step="PIN DATA" data-step-key="PIN BULK" data-number="13" onclick="startLog('/stream-all-pin-bulk', this)">PIN BULK</button><button class="step-clear-button" type="button" data-clear-step="PIN BULK" onclick="clearStepAction('PIN BULK')">CLEAR</button>
+            <button class="number-button" data-step="WP UPLOAD" data-step-key="WP UPLOAD" data-number="12" onclick="startLog('/stream-all-wp-upload', this)">WP UPLOAD</button>
+            <button class="number-button" data-step-key="CF UPLOAD" data-number="12b" onclick="startLog('/stream-all-cf-upload', this)" style="background:#f48120;color:#fff;border:1px solid #d96e10;" title="Deploy ALL configured projects to Cloudflare Pages (skips projects without a theme or CF project name)">CF UPLOAD</button>
+            <button class="number-button" data-step="PIN DATA" data-step-key="PIN BULK" data-number="13" onclick="startLog('/stream-all-pin-bulk', this)">PIN BULK</button>
             <button class="number-button" data-step-key="AUTO SAFE" data-number="AUTO" onclick="startLog('/stream-all-auto-safe', this)">AUTO SAFE (ALL STEPS)</button>
             <button class="number-button" type="button" data-step-key="CLEAR ALL LOGS" onclick="clearAllLogs()">CLEAR ALL LOGS</button>
 
@@ -6712,6 +7233,23 @@ def index():
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
               </div>
               <div class="modal-body" id="columnDetailsBody">
+                <div class="text-muted">Loading...</div>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal fade" id="cfVersionsModal" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="cfVersionsTitle">Cloudflare versions</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body" id="cfVersionsBody">
                 <div class="text-muted">Loading...</div>
               </div>
               <div class="modal-footer">

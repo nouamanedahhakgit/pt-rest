@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ article.title }} &middot; {{ site.title }}</title>
+  <meta name="description" content="{{ article.meta_description or article.excerpt }}" />
+  <link rel="stylesheet" href="/static/style.css" />
+  {% if article.pinterest_image %}<meta property="og:image" content="{{ article.pinterest_image }}" />{% endif %}
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/">{{ site.title }}</a>
+    </div>
+  </header>
+
+  <main class="wrap article-page">
+    <article class="article">
+      {% if article.category %}<span class="cat">{{ article.category }}</span>{% endif %}
+      <h1>{{ article.title }}</h1>
+
+      {% if article.featured_image %}
+      <figure class="featured">
+        <img src="{{ article.featured_image }}" alt="{{ article.title }}" />
+      </figure>
+      {% endif %}
+
+      <div class="content">
+        {{ article.html_body|safe }}
+      </div>
+
+      {% if article.pinterest_image and article.pinterest_image != article.featured_image %}
+      <figure class="pin">
+        <img src="{{ article.pinterest_image }}" alt="Pin: {{ article.title }}" />
+        <figcaption>Save this recipe to Pinterest</figcaption>
+      </figure>
+      {% endif %}
+
+      <p class="back"><a href="/">&larr; All recipes</a></p>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <small>&copy; {{ site.year }} {{ site.title }} &middot; v{{ site.version }}</small>
+    </div>
+  </footer>
+</body>
+</html>

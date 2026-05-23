@@ -1,0 +1,41 @@
+{
+  "slug": "southerndishes-static",
+  "display_name": "Southern Dishes (Static)",
+  "description": "Static Jinja port of the Southern Dishes / ChefTaling Astro theme. Coral palette, Abril Fatface headings, Karla body, Caveat handwriting accents. Renders Recipes.xlsx into a multi-page static recipe blog deployable to Cloudflare Pages.",
+  "version": "1.1.0",
+  "author": "PINTEREST tooling (port of cheftaling.com design)",
+  "cf_project_name": "",
+  "data_source": {
+    "excel": "Recipes.xlsx",
+    "required_columns": ["Title", "article", "image_1"],
+    "optional_columns": ["pinterest_title", "pinterest_description", "pinterest_image", "categories", "Recipe", "rank_math_description"]
+  },
+  "outputs": [
+    "index.html",
+    "recipes/index.html",
+    "article/<slug>/index.html",
+    "category/<slug>/index.html",
+    "author/<slug>/index.html",
+    "static/*"
+  ],
+  "default_author": {
+    "name": "Elysia",
+    "slug": "elysia",
+    "title": "Recipe Creator",
+    "bio": "I'm passionate about creating delicious, easy-to-follow recipes that bring joy to your kitchen. Whether you're a beginner or an experienced cook, you'll find something here to love.",
+    "image_url": "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=600&h=800&fit=crop&crop=face"
+  },
+  "design_tokens": {
+    "primary": "#ff7849",
+    "primary_dark": "#f9632b",
+    "primary_darker": "#e04f1a",
+    "cream_bg": "#fefdfb",
+    "cream_card": "#fdfaf5",
+    "border_soft": "#ffd0b5",
+    "fonts": {
+      "heading": "Abril Fatface",
+      "body": "Karla",
+      "handwriting": "Caveat"
+    }
+  }
+}
