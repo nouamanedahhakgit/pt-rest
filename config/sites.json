@@ -6,11 +6,17 @@
       "display_name": "A1-Pinterest_01",
       "out_dir": "A1-Pinterest_01-out",
       "templates_dir": "templates",
-      "openai_api_key": "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",
+      "openai_api_key": "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",
       "wordpress_url": "https://easydessertsdaily.com",
       "wordpress_user": "admin",
       "settings": {
-        "category_id_mapping": "{\"Cookie & Brownie Recipes\": 3, \"\tEasy Cake Recipes\": 5, \"No Bake Desserts\": 2, \"Quick Dessert Ideas\": 4}"
+        "category_id_mapping": "{\"Cookie & Brownie Recipes\": 3, \"\tEasy Cake Recipes\": 5, \"No Bake Desserts\": 2, \"Quick Dessert Ideas\": 4}",
+        "pinterest_boards": [
+          "Easy Chicken Recipes",
+          "Chicken Dinner Ideas",
+          "Healthy Chicken Meals",
+          "Air Fryer Chicken Recipes"
+        ]
       },
       "wordpress_app_password": "tLLr H9A1 OphK KH8S qdfN T6N2"
     },
@@ -19,7 +25,7 @@
       "display_name": "A2-Pinterest_02",
       "out_dir": "A2-Pinterest_02-out",
       "templates_dir": "templates",
-      "openai_api_key": "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",
+      "openai_api_key": "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",
       "wordpress_url": "https://lowcarbdaily.com",
       "wordpress_user": "admin",
       "settings": {
@@ -28,7 +34,13 @@
           "Low Carb Breakfasts": 2,
           "Low Carb Dinner Recipes": 3,
           "Low Carb Snacks & Desserts": 4
-        }
+        },
+        "pinterest_boards": [
+          "Healthy Breakfast Ideas",
+          "High Protein Breakfast Recipes",
+          "Quick Breakfast Recipes",
+          "Make Ahead Breakfast Ideas"
+        ]
       },
       "wordpress_app_password": "Rh3V 1YcP baFk XKoS rlen nVNk"
     },
@@ -37,7 +49,7 @@
       "display_name": "A3-Pinterest_03",
       "out_dir": "A3-Pinterest_03-out",
       "templates_dir": "templates",
-      "openai_api_key": "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",
+      "openai_api_key": "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",
       "wordpress_url": "https://airfryermealprep.com",
       "wordpress_user": "admin",
       "settings": {
@@ -46,7 +58,13 @@
           "Air Fryer Meal Prep": 2,
           "Easy Air Fryer Dinners": 4,
           "Healthy Air Fryer Recipes": 3
-        }
+        },
+        "pinterest_boards": [
+          "Air Fryer Meal Prep Ideas",
+          "Healthy Air Fryer Recipes",
+          "Quick Air Fryer Dinners",
+          "High Protein Air Fryer Meals"
+        ]
       },
       "wordpress_app_password": "PXbT iN19 OUJN bVJb mu5X waxD"
     },
@@ -55,7 +73,7 @@
       "display_name": "A4-Pinterest_04",
       "out_dir": "A4-Pinterest_04-out",
       "templates_dir": "templates",
-      "openai_api_key": "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",
+      "openai_api_key": "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",
       "wordpress_url": "https://healthybreakfastdaily.com",
       "wordpress_user": "admin",
       "settings": {
@@ -64,7 +82,13 @@
           "Healthy Breakfast Recipes": 5,
           "High Protein Breakfast": 3,
           "Quick Breakfast Ideas": 2
-        }
+        },
+        "pinterest_boards": [
+          "Easy Dinner Ideas",
+          "Quick Weeknight Dinners",
+          "Healthy Dinner Recipes",
+          "Family Meal Ideas"
+        ]
       },
       "wordpress_app_password": "NxI2 YCvp gJt1 cd2M RtE1 mRrs"
     }
