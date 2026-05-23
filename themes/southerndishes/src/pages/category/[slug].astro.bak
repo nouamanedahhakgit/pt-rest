@@ -1,0 +1,392 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import RecipeGrid from '../../components/RecipeGrid.astro';
+import Pagination from '../../components/Pagination.astro';
+import { DatabaseService } from '../../lib/database';
+import { EzoicPlacements } from '../../lib/ezoic';
+
+export const prerender = false;
+
+export async function getStaticPaths() {
+  return [];
+}
+
+const { slug } = Astro.params;
+
+if (!slug) {
+  return Astro.redirect('/404');
+}
+
+const db = new DatabaseService(Astro.locals.runtime?.env?.DB || {} as any);
+
+// Pagination settings
+const RECIPES_PER_PAGE = 12;
+const currentPage = parseInt(Astro.url.searchParams.get('page') || '1', 10);
+const offset = (currentPage - 1) * RECIPES_PER_PAGE;
+
+let category;
+let recipes = [];
+let allCategories = [];
+let totalRecipes = 0;
+
+try {
+  if (Astro.locals.runtime?.env?.DB) {
+    [category, recipes, allCategories, totalRecipes] = await Promise.all([
+      db.getCategoryBySlug(slug),
+      db.getRecipesByCategory(slug, RECIPES_PER_PAGE, offset),
+      db.getCategories(),
+      db.getRecipeCountByCategory(slug)
+    ]);
+
+    if (!category) {
+      return Astro.redirect('/404');
+    }
+  }
+} catch (error) {
+  console.error('Error fetching category data:', error);
+  return Astro.redirect('/404');
+}
+
+if (!category) {
+  return Astro.redirect('/404');
+}
+
+const totalPages = Math.ceil(totalRecipes / RECIPES_PER_PAGE);
+const pageTitle = `${category.name} Recipes - Recipe Website`;
+const pageDescription = category.description || `Discover delicious ${category.name.toLowerCase()} recipes. Perfect for any occasion.`;
+---
+
+<Layout
+  title={pageTitle}
+  description={pageDescription}
+>
+  <!-- Category Hero -->
+  <section class="category-hero">
+    <div class="category-hero-container">
+      <p class="category-greeting">Delicious recipes</p>
+      <h1 class="category-hero-title">{category.name}</h1>
+      {category.description && (
+        <p class="category-hero-description">{category.description}</p>
+      )}
+      <div class="category-count">
+        {totalRecipes} {totalRecipes === 1 ? 'Recipe' : 'Recipes'}
+      </div>
+    </div>
+  </section>
+
+  <!-- Ezoic Ad: Under Page Title (102) -->
+  <div id="ezoic-pub-ad-placeholder-102"></div>
+  <!-- Categories Filter -->
+  {allCategories.length > 0 && (
+    <section class="category-filter-section">
+      <div class="category-filter-container">
+        <div class="category-filter-buttons">
+          <a href="/recipes" class="filter-btn">
+            All Recipes
+          </a>
+          {allCategories.map((cat) => (
+            <a
+              href={`/category/${cat.slug}/`}
+              class={cat.slug === category.slug ? 'filter-btn active' : 'filter-btn'}
+            >
+              {cat.name}
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+
+  <!-- Ezoic Ad: Under Page Title (102) -->
+  <div id="ezoic-pub-ad-placeholder-102"></div>  )}
+
+  <!-- Recipes Grid -->
+  <div class="category-recipes-section">
+    <div class="category-recipes-container">
+      <RecipeGrid recipes={recipes} showCategory={false} />
+
+      <!-- Pagination -->
+      <Pagination
+        currentPage={currentPage}
+        totalPages={totalPages}
+        baseUrl={`/category/${category.slug}/`}
+      />
+
+      {recipes.length === 0 && (
+        <div class="category-empty-state">
+          <div class="empty-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+            </svg>
+          </div>
+          <h2 class="empty-title">No {category.name} Recipes Yet</h2>
+          <p class="empty-text">
+            We don't have any {category.name.toLowerCase()} recipes yet. Check back soon for new additions!
+          </p>
+          <a href="/recipes" class="empty-button">
+            Browse All Recipes →
+          </a>
+        </div>
+      )}
+    </div>
+  </div>
+</Layout>
+
+<style is:global>
+/* Category Hero */
+.category-hero {
+  background: linear-gradient(135deg, #fff5f0 0%, #ffe6d5 100%);
+  padding: 5rem 2rem 4rem;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.category-hero::before {
+  content: '';
+  position: absolute;
+  top: -40%;
+  right: -10%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(255, 120, 73, 0.1) 0%, transparent 70%);
+  border-radius: 50%;
+}
+
+.category-hero-container {
+  max-width: 800px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+.category-greeting {
+  font-family: 'Caveat', cursive;
+  font-size: 2.5rem;
+  color: #ff7849;
+  margin: 0 0 1rem 0;
+  font-weight: 600;
+}
+
+.category-hero-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 4rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 1.5rem 0;
+  line-height: 1.1;
+}
+
+.category-hero-description {
+  font-size: 1.375rem;
+  line-height: 1.7;
+  color: #6b7280;
+  max-width: 650px;
+  margin: 0 auto 1.5rem;
+}
+
+.category-count {
+  display: inline-block;
+  padding: 0.75rem 2rem;
+  background: white;
+  border-radius: 9999px;
+  border: 2px solid #ffd0b5;
+  font-weight: 700;
+  color: #ff7849;
+  font-size: 1rem;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.15);
+}
+
+/* Category Filter */
+.category-filter-section {
+  background: white;
+  padding: 3rem 2rem;
+  border-bottom: 2px solid #ffd0b5;
+}
+
+.category-filter-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.category-filter-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.filter-btn {
+  padding: 0.875rem 2rem;
+  background: #fefdfb;
+  color: #6b7280;
+  border: 2px solid #ffd0b5;
+  border-radius: 9999px;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.9375rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.filter-btn:hover {
+  background: #fff5f0;
+  border-color: #ff9466;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.15);
+}
+
+.filter-btn.active {
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  color: white;
+  border-color: #ff7849;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.3);
+}
+
+.filter-btn.active:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 120, 73, 0.4);
+}
+
+/* Recipes Section */
+.category-recipes-section {
+  background: white;
+  padding: 5rem 2rem;
+}
+
+.category-recipes-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* Empty State */
+.category-empty-state {
+  text-align: center;
+  padding: 5rem 2rem;
+  background: linear-gradient(to bottom, #fff5f0 0%, white 100%);
+  border-radius: 2rem;
+  border: 2px solid #ffd0b5;
+  margin-top: 3rem;
+}
+
+.empty-icon {
+  width: 5rem;
+  height: 5rem;
+  margin: 0 auto 2rem;
+  background: linear-gradient(135deg, #ffe6d5 0%, #ffd0b5 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-icon svg {
+  width: 2.5rem;
+  height: 2.5rem;
+  color: #ff7849;
+}
+
+.empty-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 2rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 1rem 0;
+}
+
+.empty-text {
+  font-size: 1.125rem;
+  color: #6b7280;
+  margin: 0 0 2rem 0;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.empty-button {
+  display: inline-block;
+  padding: 1rem 2.5rem;
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  color: white;
+  text-decoration: none;
+  border-radius: 9999px;
+  font-weight: 700;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.3);
+}
+
+.empty-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 120, 73, 0.4);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .category-hero {
+    padding: 4rem 1.5rem 3rem;
+  }
+
+  .category-greeting {
+    font-size: 2rem;
+  }
+
+  .category-hero-title {
+    font-size: 2.5rem;
+  }
+
+  .category-hero-description {
+    font-size: 1.125rem;
+  }
+
+  .category-filter-section {
+    padding: 2rem 1.5rem;
+  }
+
+  .filter-btn {
+    padding: 0.75rem 1.5rem;
+    font-size: 0.875rem;
+  }
+
+  .category-recipes-section {
+    padding: 4rem 1.5rem;
+  }
+
+  .category-empty-state {
+    padding: 4rem 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .category-hero {
+    padding: 3rem 1rem 2rem;
+  }
+
+  .category-greeting {
+    font-size: 1.75rem;
+  }
+
+  .category-hero-title {
+    font-size: 2rem;
+  }
+
+  .category-hero-description {
+    font-size: 1rem;
+  }
+
+  .category-filter-section {
+    padding: 1.5rem 1rem;
+  }
+
+  .category-recipes-section {
+    padding: 3rem 1rem;
+  }
+
+  .empty-title {
+    font-size: 1.75rem;
+  }
+
+  .empty-text {
+    font-size: 1rem;
+  }
+}
+</style>

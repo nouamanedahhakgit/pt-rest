@@ -1,0 +1,1183 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { DatabaseService } from '../lib/database';
+
+export const prerender = false;
+
+const db = new DatabaseService(Astro.locals.runtime?.env?.DB || {} as any);
+let page;
+let settings: Record<string, string> = {};
+
+try {
+  if (Astro.locals.runtime?.env?.DB) {
+    page = await db.getPageBySlug('contact-us');
+    if (!page) return Astro.redirect('/404');
+
+    // Fetch site settings
+    settings = await db.getAllSettings();
+  }
+} catch (error) {
+  console.error('Error fetching page:', error);
+  return Astro.redirect('/404');
+}
+
+if (!page) return Astro.redirect('/404');
+
+const siteName = settings.site_name || 'ChefTaling';
+const siteDomain = settings.site_domain || 'cheftaling.com';
+const facebookUrl = settings.facebook_url || 'https://facebook.com';
+const pinterestUrl = settings.pinterest_url || 'https://pinterest.com';
+
+const contactMethods = [
+  {
+    title: 'General Inquiries',
+    description: 'For general questions, feedback, or suggestions',
+    email: `hello@${siteDomain}`,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>`
+  },
+  {
+    title: 'Recipe Questions',
+    description: 'Have a question about one of our recipes? Need a substitution suggestion? We\'re happy to help!',
+    email: `recipes@${siteDomain}`,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>`
+  },
+  {
+    title: 'Business Inquiries',
+    description: 'For partnership opportunities, sponsorships, or business-related inquiries',
+    email: `business@${siteDomain}`,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>`
+  },
+  {
+    title: 'Technical Support',
+    description: 'Experiencing issues with our website? Let us know',
+    email: `support@${siteDomain}`,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>`
+  },
+  {
+    title: 'Legal Matters',
+    description: 'For copyright, privacy, or other legal concerns',
+    email: `legal@${siteDomain}`,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/>`
+  },
+  {
+    title: 'Media & Press',
+    description: 'Are you a journalist or blogger looking for information or interviews?',
+    email: `press@${siteDomain}`,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/>`
+  }
+];
+---
+
+<Layout title={`${page.title} - ${siteName}`} description={page.meta_description || page.title} canonical={Astro.url.toString()}>
+  <!-- Hero Section -->
+  <section class="contact-hero">
+    <div class="hero-container">
+      <p class="hero-greeting">We'd love to hear from you!</p>
+      <h1 class="hero-title">Get in Touch</h1>
+      <p class="hero-subtitle">
+        Have a question, feedback, or just want to say hello? Drop us a message and we'll get back to you soon!
+      </p>
+    </div>
+  </section>
+
+  <div class="contact-page-wrapper">
+    <!-- Two Column Layout: Form + Quick Contact -->
+    <div class="contact-main-grid">
+      <!-- Contact Form Section -->
+      <div class="contact-form-section">
+        <div class="form-header">
+          <h2 class="form-title">Send a Message</h2>
+          <p class="form-description">
+            Fill out the form and we'll get back to you soon!
+          </p>
+        </div>
+
+      <form id="contactForm" class="contact-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="name" class="form-label">
+              Your Name <span class="required">*</span>
+            </label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              class="form-input"
+              placeholder="John Doe"
+              required
+              maxlength="100"
+            />
+            <span class="form-error" id="name-error"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="email" class="form-label">
+              Email Address <span class="required">*</span>
+            </label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              class="form-input"
+              placeholder="john@example.com"
+              required
+            />
+            <span class="form-error" id="email-error"></span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="subject" class="form-label">
+            Subject <span class="required">*</span>
+          </label>
+          <input
+            type="text"
+            id="subject"
+            name="subject"
+            class="form-input"
+            placeholder="What's your message about?"
+            required
+            maxlength="200"
+          />
+          <span class="form-error" id="subject-error"></span>
+        </div>
+
+        <!-- Honeypot field - hidden from humans, visible to bots -->
+        <div class="honeypot-field" aria-hidden="true">
+          <label for="website">Website</label>
+          <input
+            type="text"
+            id="website"
+            name="website"
+            tabindex="-1"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="message" class="form-label">
+            Message <span class="required">*</span>
+          </label>
+          <textarea
+            id="message"
+            name="message"
+            class="form-input form-textarea"
+            placeholder="Tell us more about your inquiry..."
+            required
+            rows="6"
+            maxlength="5000"
+          ></textarea>
+          <div class="textarea-footer">
+            <span class="form-error" id="message-error"></span>
+            <span class="character-count" id="character-count">0 / 5000</span>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="submit-button" id="submitButton">
+            <svg class="button-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+            </svg>
+            <span class="button-text">Send Message</span>
+          </button>
+        </div>
+
+        <!-- Success/Error Messages -->
+        <div id="formMessage" class="form-message" style="display: none;"></div>
+      </form>
+      </div>
+
+      <!-- Quick Contact Sidebar -->
+      <div class="quick-contact-sidebar">
+        <div class="quick-contact-card">
+          <h3 class="quick-title">Quick Contact</h3>
+          <p class="quick-description">Prefer email? Reach us directly:</p>
+          
+          <div class="quick-contact-list">
+            <a href={`mailto:hello@${siteDomain}`} class="quick-contact-item">
+              <div class="quick-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <div>
+                <div class="quick-label">General</div>
+                <div class="quick-email">hello@{siteDomain}</div>
+              </div>
+            </a>
+
+            <a href={`mailto:recipes@${siteDomain}`} class="quick-contact-item">
+              <div class="quick-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                </svg>
+              </div>
+              <div>
+                <div class="quick-label">Recipes</div>
+                <div class="quick-email">recipes@{siteDomain}</div>
+              </div>
+            </a>
+
+            <a href={`mailto:business@${siteDomain}`} class="quick-contact-item">
+              <div class="quick-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <div>
+                <div class="quick-label">Business</div>
+                <div class="quick-email">business@{siteDomain}</div>
+              </div>
+            </a>
+          </div>
+        </div>
+
+        <div class="social-card">
+          <h3 class="social-card-title">Follow Us</h3>
+          <p class="social-card-text">Join our community for daily inspiration!</p>
+          <div class="social-buttons">
+            <a href={pinterestUrl} target="_blank" rel="noopener noreferrer" class="social-button pinterest">
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/></svg>
+              Pinterest
+            </a>
+          </div>
+        </div>
+
+        <div class="response-card">
+          <div class="response-icon">⏱️</div>
+          <h4 class="response-title">Response Time</h4>
+          <p class="response-text">We typically respond within 2-3 business days.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- All Contact Methods Section -->
+    <section class="all-contacts-section">
+      <div class="section-header-center">
+        <p class="section-handwriting">Need something specific?</p>
+        <h2 class="section-title-center">All Contact Options</h2>
+      </div>
+
+      <div class="contact-cards-grid">
+        {contactMethods.map((method) => (
+          <div class="contact-card">
+            <div class="contact-icon-wrapper">
+              <svg class="contact-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" set:html={method.icon} />
+            </div>
+            <h3 class="contact-card-title">{method.title}</h3>
+            <p class="contact-card-description">{method.description}</p>
+            <a href={`mailto:${method.email}`} class="contact-email">
+              {method.email}
+            </a>
+          </div>
+        ))}
+      </div>
+    </section>
+  </div>
+</Layout>
+
+<script>
+// Contact form handling
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('contactForm') as HTMLFormElement;
+  const submitButton = document.getElementById('submitButton') as HTMLButtonElement;
+  const formMessage = document.getElementById('formMessage') as HTMLDivElement;
+  const messageTextarea = document.getElementById('message') as HTMLTextAreaElement;
+  const characterCount = document.getElementById('character-count') as HTMLSpanElement;
+
+  // Character counter for message field
+  if (messageTextarea && characterCount) {
+    messageTextarea.addEventListener('input', () => {
+      const length = messageTextarea.value.length;
+      characterCount.textContent = `${length} / 5000`;
+
+      if (length > 4800) {
+        characterCount.style.color = '#dc2626'; // Red warning
+      } else {
+        characterCount.style.color = '#6b7280'; // Gray normal
+      }
+    });
+  }
+
+  // Clear error messages
+  const clearErrors = () => {
+    const errorElements = document.querySelectorAll('.form-error');
+    errorElements.forEach(el => {
+      (el as HTMLElement).textContent = '';
+    });
+
+    const inputElements = document.querySelectorAll('.form-input');
+    inputElements.forEach(el => {
+      el.classList.remove('input-error');
+    });
+  };
+
+  // Show error message
+  const showError = (fieldId: string, message: string) => {
+    const errorEl = document.getElementById(`${fieldId}-error`);
+    const inputEl = document.getElementById(fieldId);
+
+    if (errorEl) errorEl.textContent = message;
+    if (inputEl) inputEl.classList.add('input-error');
+  };
+
+  // Show form message
+  const showMessage = (message: string, isError: boolean = false) => {
+    if (!formMessage) return;
+
+    formMessage.textContent = message;
+    formMessage.className = `form-message ${isError ? 'error' : 'success'}`;
+    formMessage.style.display = 'block';
+
+    // Scroll to message
+    formMessage.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    // Auto-hide success messages after 5 seconds
+    if (!isError) {
+      setTimeout(() => {
+        formMessage.style.display = 'none';
+      }, 5000);
+    }
+  };
+
+  // Set loading state
+  const setLoading = (loading: boolean) => {
+    if (!submitButton) return;
+
+    const buttonText = submitButton.querySelector('.button-text');
+
+    if (loading) {
+      submitButton.disabled = true;
+      submitButton.classList.add('loading');
+      if (buttonText) buttonText.textContent = 'Sending...';
+    } else {
+      submitButton.disabled = false;
+      submitButton.classList.remove('loading');
+      if (buttonText) buttonText.textContent = 'Send Message';
+    }
+  };
+
+  // Form submission
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      clearErrors();
+      formMessage.style.display = 'none';
+      setLoading(true);
+
+      // Get form data
+      const formData = new FormData(form);
+
+      // Bot detection: Check honeypot field
+      const honeypot = formData.get('website') as string;
+      if (honeypot) {
+        // This is likely a bot - silently fail
+        console.warn('Bot detected via honeypot field');
+        showMessage('Thank you! Your message has been sent.', false);
+        form.reset();
+        setLoading(false);
+        return;
+      }
+
+      const data = {
+        name: formData.get('name') as string,
+        email: formData.get('email') as string,
+        subject: formData.get('subject') as string,
+        message: formData.get('message') as string,
+      };
+
+      try {
+        const response = await fetch('/api/contact', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data),
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showMessage(result.message, false);
+          form.reset();
+          if (characterCount) characterCount.textContent = '0 / 5000';
+        } else {
+          // Handle field-specific errors
+          if (result.fields) {
+            Object.keys(result.fields).forEach(field => {
+              if (result.fields[field]) {
+                showError(field, result.fields[field]);
+              }
+            });
+          }
+
+          showMessage(result.error || 'Failed to send message. Please try again.', true);
+        }
+      } catch (error) {
+        console.error('Error submitting form:', error);
+        showMessage('An unexpected error occurred. Please try again later.', true);
+      } finally {
+        setLoading(false);
+      }
+    });
+  }
+});
+</script>
+
+<style is:global>
+/* ================================
+   HERO SECTION
+   ================================ */
+.contact-hero {
+  background: linear-gradient(to bottom, #fefdfb 0%, #fff5f0 100%);
+  padding: 5rem 2rem 4rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-container {
+  max-width: 800px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.hero-greeting {
+  font-family: 'Caveat', cursive;
+  font-size: 2.5rem;
+  color: #ff7849;
+  margin: 0 0 1rem 0;
+  font-weight: 600;
+}
+
+.hero-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 3.5rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 1.5rem 0;
+  line-height: 1.1;
+}
+
+.hero-subtitle {
+  font-size: 1.25rem;
+  line-height: 1.6;
+  color: #6b7280;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* ================================
+   PAGE WRAPPER
+   ================================ */
+.contact-page-wrapper {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 4rem 2rem;
+}
+
+/* ================================
+   TWO COLUMN LAYOUT
+   ================================ */
+.contact-main-grid {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 3rem;
+  margin-bottom: 5rem;
+}
+
+/* ================================
+   CONTACT FORM SECTION
+   ================================ */
+.contact-form-section {
+  background: white;
+  border-radius: 2rem;
+  padding: 3rem;
+  box-shadow: 0 10px 40px rgba(255, 120, 73, 0.1);
+  border: 2px solid #ffd0b5;
+}
+
+.form-header {
+  margin-bottom: 2rem;
+}
+
+.form-title {
+  font-size: 2rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 0.75rem 0;
+  font-family: 'Abril Fatface', serif;
+}
+
+.form-description {
+  font-size: 1rem;
+  color: #6b7280;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.contact-form {
+  width: 100%;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+
+.required {
+  color: #dc2626;
+}
+
+.form-input {
+  width: 100%;
+  padding: 0.875rem 1rem;
+  font-size: 1rem;
+  color: #111827;
+  border: 2px solid #e5e7eb;
+  border-radius: 0.75rem;
+  background: white;
+  transition: all 0.2s ease;
+  font-family: 'Roboto', helvetica, sans-serif;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #ff7849;
+  box-shadow: 0 0 0 3px rgba(255, 120, 73, 0.1);
+}
+
+.form-input::placeholder {
+  color: #9ca3af;
+}
+
+.form-input.input-error {
+  border-color: #dc2626;
+}
+
+.form-input.input-error:focus {
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 150px;
+  line-height: 1.6;
+}
+
+.textarea-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.character-count {
+  font-size: 0.8125rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.form-error {
+  display: block;
+  font-size: 0.8125rem;
+  color: #dc2626;
+  margin-top: 0.375rem;
+  font-weight: 500;
+  min-height: 1.25rem;
+}
+
+.form-actions {
+  margin-top: 2rem;
+  text-align: center;
+}
+
+.submit-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 1rem 2.5rem;
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  color: white;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px rgba(255, 120, 73, 0.3);
+}
+
+.submit-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(255, 120, 73, 0.4);
+  background: linear-gradient(135deg, #f9632b 0%, #e04f1a 100%);
+}
+
+.submit-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.submit-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.submit-button.loading {
+  position: relative;
+}
+
+.submit-button.loading .button-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.button-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.form-message {
+  margin-top: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-radius: 0.75rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: center;
+}
+
+.form-message.success {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+.form-message.error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+/* ================================
+   QUICK CONTACT SIDEBAR
+   ================================ */
+.quick-contact-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.quick-contact-card {
+  background: linear-gradient(135deg, #fff5f0 0%, #ffe6d5 100%);
+  border-radius: 1.5rem;
+  padding: 2rem;
+  border: 2px solid #ffd0b5;
+}
+
+.quick-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 0.5rem 0;
+}
+
+.quick-description {
+  font-size: 0.9375rem;
+  color: #6b7280;
+  margin: 0 0 1.5rem 0;
+}
+
+.quick-contact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.quick-contact-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: white;
+  border-radius: 1rem;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  border: 2px solid transparent;
+}
+
+.quick-contact-item:hover {
+  border-color: #ff7849;
+  transform: translateX(5px);
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.15);
+}
+
+.quick-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quick-icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: white;
+}
+
+.quick-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ff7849;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.125rem;
+}
+
+.quick-email {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.social-card {
+  background: white;
+  border-radius: 1.5rem;
+  padding: 2rem;
+  border: 2px solid #ffd0b5;
+}
+
+.social-card-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 0.5rem 0;
+}
+
+.social-card-text {
+  font-size: 0.9375rem;
+  color: #6b7280;
+  margin: 0 0 1.25rem 0;
+}
+
+.social-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.social-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1.5rem;
+  border-radius: 9999px;
+  color: white;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.social-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.social-button.pinterest {
+  background: #e60023;
+}
+
+
+
+.response-card {
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  border-radius: 1.5rem;
+  padding: 2rem;
+  text-align: center;
+  color: white;
+}
+
+.response-icon {
+  font-size: 3rem;
+  margin-bottom: 0.75rem;
+}
+
+.response-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 1.25rem;
+  font-weight: 400;
+  margin: 0 0 0.5rem 0;
+}
+
+.response-text {
+  font-size: 0.9375rem;
+  margin: 0;
+  opacity: 0.95;
+}
+
+/* ================================
+   ALL CONTACTS SECTION
+   ================================ */
+.all-contacts-section {
+  background: #fefdfb;
+  padding: 5rem 2rem;
+  margin: 0 -2rem -4rem;
+  border-radius: 2rem 2rem 0 0;
+}
+
+.section-header-center {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.section-handwriting {
+  font-family: 'Caveat', cursive;
+  font-size: 2rem;
+  color: #ff7849;
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+}
+
+.section-title-center {
+  font-family: 'Abril Fatface', serif;
+  font-size: 2.5rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0;
+  line-height: 1.2;
+}
+
+/* ================================
+   HONEYPOT FIELD (BOT TRAP)
+   ================================ */
+.honeypot-field {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* ================================
+   CONTACT CARDS GRID
+   ================================ */
+.contact-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.contact-card {
+  background: white;
+  border-radius: 1.5rem;
+  padding: 2rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border: 2px solid #ffd0b5;
+}
+
+.contact-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 12px 30px rgba(255, 120, 73, 0.2);
+  border-color: #ff9466;
+}
+
+.contact-icon-wrapper {
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.contact-card:hover .contact-icon-wrapper {
+  transform: scale(1.1) rotate(5deg);
+  box-shadow: 0 8px 20px rgba(255, 120, 73, 0.4);
+}
+
+.contact-icon {
+  width: 2rem;
+  height: 2rem;
+  color: white;
+}
+
+.contact-card-title {
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 0.75rem 0;
+  font-family: 'Abril Fatface', serif;
+  line-height: 1.2;
+}
+
+.contact-card-description {
+  font-size: 0.9375rem;
+  color: #6b7280;
+  line-height: 1.6;
+  margin: 0 0 1.5rem 0;
+  flex: 1;
+}
+
+.contact-email {
+  color: #ff7849;
+  font-weight: 600;
+  font-size: 0.875rem;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  word-break: break-all;
+}
+
+.contact-email:hover {
+  color: #f9632b;
+  text-decoration: underline;
+}
+
+/* ================================
+   RESPONSIVE DESIGN
+   ================================ */
+@media (max-width: 1200px) {
+  .contact-main-grid {
+    grid-template-columns: 1fr 340px;
+    gap: 2rem;
+  }
+}
+
+@media (max-width: 1024px) {
+  .contact-main-grid {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .quick-contact-sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .quick-contact-card,
+  .social-card,
+  .response-card {
+    flex: 1;
+    min-width: 280px;
+  }
+
+  .contact-cards-grid {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .contact-hero {
+    padding: 4rem 1.5rem 3rem;
+  }
+
+  .hero-greeting {
+    font-size: 2rem;
+  }
+
+  .hero-title {
+    font-size: 2.5rem;
+  }
+
+  .hero-subtitle {
+    font-size: 1.125rem;
+  }
+
+  .contact-page-wrapper {
+    padding: 3rem 1.5rem;
+  }
+
+  .contact-form-section {
+    padding: 2rem 1.5rem;
+  }
+
+  .form-title {
+    font-size: 1.5rem;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+    margin-bottom: 0;
+  }
+
+  .form-input {
+    padding: 0.75rem 0.875rem;
+  }
+
+  .submit-button {
+    width: 100%;
+    justify-content: center;
+    padding: 0.875rem 2rem;
+  }
+
+  .quick-contact-sidebar {
+    flex-direction: column;
+  }
+
+  .all-contacts-section {
+    padding: 4rem 1.5rem;
+  }
+
+  .section-handwriting {
+    font-size: 1.75rem;
+  }
+
+  .section-title-center {
+    font-size: 2rem;
+  }
+
+  .contact-cards-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .contact-card {
+    padding: 1.5rem;
+  }
+
+  .contact-icon-wrapper {
+    width: 4rem;
+    height: 4rem;
+  }
+
+  .contact-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .contact-hero {
+    padding: 3rem 1rem 2rem;
+  }
+
+  .hero-greeting {
+    font-size: 1.75rem;
+  }
+
+  .hero-title {
+    font-size: 2rem;
+  }
+
+  .hero-subtitle {
+    font-size: 1rem;
+  }
+
+  .contact-page-wrapper {
+    padding: 2rem 1rem;
+  }
+
+  .contact-form-section {
+    padding: 1.5rem 1rem;
+    border-radius: 1.5rem;
+  }
+
+  .form-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .form-title {
+    font-size: 1.375rem;
+  }
+
+  .form-description {
+    font-size: 0.9375rem;
+  }
+
+  .form-label {
+    font-size: 0.875rem;
+  }
+
+  .form-input {
+    font-size: 0.9375rem;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .submit-button {
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+  }
+
+  .quick-contact-card,
+  .social-card,
+  .response-card {
+    padding: 1.5rem;
+  }
+
+  .quick-title,
+  .social-card-title {
+    font-size: 1.25rem;
+  }
+
+  .all-contacts-section {
+    padding: 3rem 1rem;
+  }
+
+  .section-handwriting {
+    font-size: 1.5rem;
+  }
+
+  .section-title-center {
+    font-size: 1.75rem;
+  }
+
+  .contact-card {
+    padding: 1.25rem;
+  }
+
+  .contact-icon-wrapper {
+    width: 3.5rem;
+    height: 3.5rem;
+  }
+
+  .contact-card-title {
+    font-size: 1.125rem;
+  }
+
+  .contact-card-description {
+    font-size: 0.875rem;
+  }
+
+  .contact-email {
+    font-size: 0.8125rem;
+  }
+}
+</style>

@@ -1,0 +1,262 @@
+---
+import type { Recipe, RecipeData } from '../types/recipe';
+import { stripHtml, truncateText, formatTime, getResponsiveSrcSet, getImageSizes, decodeHtmlEntities } from '../lib/utils';
+
+export interface Props {
+  recipe: Recipe;
+  showCategory?: boolean;
+  className?: string;
+  imageSize?: 'small' | 'medium' | 'large';
+  priority?: boolean;
+}
+
+const { recipe, showCategory = false, className = '', imageSize = 'medium', priority = false } = Astro.props;
+
+let recipeData: RecipeData;
+try {
+  recipeData = JSON.parse(recipe.recipe_json);
+} catch (e) {
+  recipeData = {
+    name: recipe.title,
+    summary: '',
+    servings: '',
+    prep_time: '',
+    cook_time: '',
+    total_time: '',
+    calories: '',
+    course: '',
+    cuisine: '',
+    keywords: [],
+    notes: '',
+    ingredients: [],
+    instructions: []
+  };
+}
+
+const imageUrl = recipe.featured_image;
+const description = recipeData.summary || stripHtml(recipe.article_content);
+const truncatedDescription = truncateText(description, 100);
+
+const imageSizeClasses = {
+  small: 'h-48',
+  medium: 'h-56',
+  large: 'h-64'
+};
+
+const srcset = getResponsiveSrcSet(imageUrl, [400, 600, 800]);
+const sizes = getImageSizes([
+  { maxWidth: '768px', size: '100vw' },
+  { maxWidth: '1024px', size: '50vw' },
+  { maxWidth: '9999px', size: '33vw' }
+]);
+---
+
+<article class={`recipe-card ${className}`}>
+  <a href={`/${recipe.slug}/`} class="recipe-card-link">
+    <div class={`recipe-card-image-wrapper ${imageSizeClasses[imageSize]}`}>
+      <img
+        src={imageUrl}
+        srcset={srcset || undefined}
+        sizes={sizes}
+        alt={recipe.title}
+        class="recipe-card-image"
+        loading={priority ? "eager" : "lazy"}
+        fetchpriority={priority ? "high" : undefined}
+        width="800"
+        height="600"
+      />
+      {showCategory && recipe.category && (
+        <div class="recipe-card-category">
+          <span class="category-badge">
+            {decodeHtmlEntities(recipe.category.name)}
+          </span>
+        </div>
+      )}
+    </div>
+
+    <div class="recipe-card-content">
+      <h3 class="recipe-card-title">
+        {decodeHtmlEntities(recipe.title)}
+      </h3>
+
+      {truncatedDescription && (
+        <p class="recipe-card-description">
+          {decodeHtmlEntities(truncatedDescription)}
+        </p>
+      )}
+
+      <div class="recipe-card-meta">
+        <div class="meta-item">
+          <svg class="meta-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span class="meta-text">{formatTime(recipeData.total_time) || 'N/A'}</span>
+        </div>
+        <div class="meta-item">
+          <svg class="meta-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          <span class="meta-text">{recipeData.servings || 'N/A'}</span>
+        </div>
+      </div>
+    </div>
+  </a>
+</article>
+
+<style is:global>
+/* Recipe Card */
+.recipe-card {
+  background: white;
+  border-radius: 1.5rem;
+  overflow: hidden;
+  border: 2px solid #ffd0b5;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.08);
+}
+
+.recipe-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 20px 40px rgba(255, 120, 73, 0.2);
+  border-color: #ff9466;
+}
+
+.recipe-card-link {
+  display: block;
+  text-decoration: none;
+}
+
+.recipe-card-image-wrapper {
+  position: relative;
+  overflow: hidden;
+}
+
+.recipe-card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.5s ease;
+}
+
+.recipe-card:hover .recipe-card-image {
+  transform: scale(1.1);
+}
+
+.recipe-card-category {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 10;
+}
+
+.category-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.4);
+}
+
+.recipe-card-content {
+  padding: 1.5rem;
+}
+
+.recipe-card-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 1.375rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 0.75rem 0;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  transition: color 0.3s ease;
+}
+
+.recipe-card:hover .recipe-card-title {
+  color: #ff7849;
+}
+
+.recipe-card-description {
+  color: #6b7280;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  margin: 0 0 1rem 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.recipe-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 1rem;
+  margin-top: 1rem;
+  border-top: 2px solid #ffd0b5;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.meta-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: #ff7849;
+  flex-shrink: 0;
+}
+
+.meta-text {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .recipe-card-title {
+    font-size: 1.25rem;
+  }
+
+  .recipe-card-description {
+    font-size: 0.875rem;
+  }
+
+  .recipe-card-content {
+    padding: 1.25rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .recipe-card {
+    border-radius: 1rem;
+  }
+
+  .recipe-card-title {
+    font-size: 1.125rem;
+  }
+
+  .recipe-card-content {
+    padding: 1rem;
+  }
+
+  .meta-icon {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .meta-text {
+    font-size: 0.8125rem;
+  }
+}
+</style>

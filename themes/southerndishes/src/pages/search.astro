@@ -1,0 +1,470 @@
+---
+import Layout from '../layouts/Layout.astro';
+import RecipeCard from '../components/RecipeCard.astro';
+import { DatabaseService } from '../lib/database';
+
+export const prerender = false;
+
+const searchQuery = Astro.url.searchParams.get('q') || '';
+
+let recipes = [];
+let errorMessage = '';
+
+if (Astro.locals.runtime?.env?.DB) {
+  try {
+    const db = new DatabaseService(Astro.locals.runtime.env.DB);
+
+    if (searchQuery.trim()) {
+      recipes = await db.searchRecipes(searchQuery, 50);
+    }
+  } catch (error) {
+    console.error('Search error:', error);
+    errorMessage = 'An error occurred while searching. Please try again.';
+  }
+}
+---
+
+<Layout
+  title={searchQuery ? `Search Results for "${searchQuery}"` : 'Search Recipes'}
+  description={searchQuery ? `Search results for "${searchQuery}" on our recipe website` : 'Search our collection of delicious recipes'}
+>
+  <!-- Search Hero -->
+  <section class="search-hero">
+    <div class="search-hero-container">
+      <p class="search-greeting">Find your next favorite!</p>
+      <h1 class="search-hero-title">
+        {searchQuery ? 'Search Results' : 'Search Recipes'}
+      </h1>
+      {searchQuery && (
+        <p class="search-query-text">
+          Results for <span class="search-query-highlight">"{searchQuery}"</span>
+        </p>
+      )}
+    </div>
+  </section>
+
+  <!-- Search Form Section -->
+  <section class="search-form-section">
+    <div class="search-form-container">
+      <form action="/search" method="GET" class="search-form">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+          </svg>
+          <input
+            type="search"
+            name="q"
+            value={searchQuery}
+            placeholder="Search for recipes, ingredients, or categories..."
+            class="search-input"
+            autocomplete="off"
+            autofocus
+          />
+          <button type="submit" class="search-button">
+            Search
+          </button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Error Message -->
+  {errorMessage && (
+    <div class="search-error-section">
+      <div class="search-error-container">
+        <div class="error-message">
+          <svg class="error-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <p>{errorMessage}</p>
+        </div>
+      </div>
+    </div>
+  )}
+
+  <!-- Search Results -->
+  <div class="search-results-section">
+    <div class="search-results-container">
+      {!searchQuery && !errorMessage && (
+        <div class="search-empty-state">
+          <div class="empty-search-icon">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+          </div>
+          <p class="empty-search-text">Enter a search term to find delicious recipes</p>
+        </div>
+      )}
+
+      {searchQuery && !errorMessage && (
+        <div>
+          {recipes.length > 0 ? (
+            <>
+              <div class="results-count">
+                Found <span class="count-number">{recipes.length}</span> {recipes.length === 1 ? 'recipe' : 'recipes'}
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {recipes.map((recipe) => (
+                  <RecipeCard recipe={recipe} showCategory={true} />
+                ))}
+              </div>
+            </>
+          ) : (
+            <div class="no-results-state">
+              <div class="no-results-icon">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+              </div>
+              <h3 class="no-results-title">No Recipes Found</h3>
+              <p class="no-results-text">
+                We couldn't find any recipes matching <span class="query-highlight">"{searchQuery}"</span>
+              </p>
+              <p class="no-results-suggestion">
+                Try different keywords or <a href="/recipes" class="suggestion-link">browse all recipes</a>
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  </div>
+</Layout>
+
+<style is:global>
+/* Search Hero */
+.search-hero {
+  background: linear-gradient(135deg, #fff5f0 0%, #ffe6d5 100%);
+  padding: 5rem 2rem 4rem;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.search-hero::before {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: -10%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(255, 120, 73, 0.1) 0%, transparent 70%);
+  border-radius: 50%;
+}
+
+.search-hero-container {
+  max-width: 800px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+.search-greeting {
+  font-family: 'Caveat', cursive;
+  font-size: 2.5rem;
+  color: #ff7849;
+  margin: 0 0 1rem 0;
+  font-weight: 600;
+}
+
+.search-hero-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 4rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 1rem 0;
+  line-height: 1.1;
+}
+
+.search-query-text {
+  font-size: 1.25rem;
+  color: #6b7280;
+}
+
+.search-query-highlight {
+  font-weight: 700;
+  color: #ff7849;
+}
+
+/* Search Form */
+.search-form-section {
+  background: white;
+  padding: 3rem 2rem;
+  border-bottom: 2px solid #ffd0b5;
+}
+
+.search-form-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.search-form {
+  width: 100%;
+}
+
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: white;
+  border: 2px solid #ffd0b5;
+  border-radius: 9999px;
+  padding: 0.5rem;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.1);
+  transition: all 0.3s ease;
+}
+
+.search-input-wrapper:focus-within {
+  border-color: #ff7849;
+  box-shadow: 0 6px 20px rgba(255, 120, 73, 0.2);
+}
+
+.search-icon {
+  position: absolute;
+  left: 1.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  color: #ff7849;
+}
+
+.search-input {
+  flex: 1;
+  padding: 1rem 1rem 1rem 4rem;
+  border: none;
+  outline: none;
+  font-size: 1.125rem;
+  color: #111827;
+  background: transparent;
+}
+
+.search-input::placeholder {
+  color: #9ca3af;
+}
+
+.search-button {
+  padding: 1rem 2.5rem;
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.3);
+}
+
+.search-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 120, 73, 0.4);
+}
+
+/* Error Message */
+.search-error-section {
+  background: white;
+  padding: 2rem;
+}
+
+.search-error-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.error-message {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: #fee2e2;
+  border: 2px solid #fca5a5;
+  border-radius: 1rem;
+  color: #991b1b;
+  font-weight: 600;
+}
+
+.error-icon {
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+}
+
+/* Search Results */
+.search-results-section {
+  background: white;
+  padding: 5rem 2rem;
+}
+
+.search-results-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.results-count {
+  text-align: center;
+  font-size: 1.125rem;
+  color: #6b7280;
+  margin-bottom: 3rem;
+}
+
+.count-number {
+  font-weight: 700;
+  color: #ff7849;
+  font-size: 1.25rem;
+}
+
+/* Empty States */
+.search-empty-state,
+.no-results-state {
+  text-align: center;
+  padding: 5rem 2rem;
+  background: linear-gradient(to bottom, #fff5f0 0%, white 100%);
+  border-radius: 2rem;
+  border: 2px solid #ffd0b5;
+}
+
+.empty-search-icon,
+.no-results-icon {
+  width: 5rem;
+  height: 5rem;
+  margin: 0 auto 2rem;
+  background: linear-gradient(135deg, #ffe6d5 0%, #ffd0b5 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-search-icon svg,
+.no-results-icon svg {
+  width: 2.5rem;
+  height: 2.5rem;
+  color: #ff7849;
+}
+
+.empty-search-text {
+  font-size: 1.25rem;
+  color: #6b7280;
+}
+
+.no-results-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 2rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 1rem 0;
+}
+
+.no-results-text {
+  font-size: 1.125rem;
+  color: #6b7280;
+  margin: 0 0 1rem 0;
+}
+
+.query-highlight {
+  font-weight: 700;
+  color: #ff7849;
+}
+
+.no-results-suggestion {
+  font-size: 1rem;
+  color: #9ca3af;
+}
+
+.suggestion-link {
+  color: #ff7849;
+  text-decoration: underline;
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+
+.suggestion-link:hover {
+  color: #f9632b;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .search-hero {
+    padding: 4rem 1.5rem 3rem;
+  }
+
+  .search-greeting {
+    font-size: 2rem;
+  }
+
+  .search-hero-title {
+    font-size: 2.5rem;
+  }
+
+  .search-query-text {
+    font-size: 1.125rem;
+  }
+
+  .search-form-section {
+    padding: 2rem 1.5rem;
+  }
+
+  .search-input {
+    font-size: 1rem;
+    padding: 0.875rem 0.875rem 0.875rem 3.5rem;
+  }
+
+  .search-icon {
+    left: 1.25rem;
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .search-button {
+    padding: 0.875rem 1.75rem;
+    font-size: 0.9375rem;
+  }
+
+  .search-results-section {
+    padding: 4rem 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .search-hero {
+    padding: 3rem 1rem 2rem;
+  }
+
+  .search-greeting {
+    font-size: 1.75rem;
+  }
+
+  .search-hero-title {
+    font-size: 2rem;
+  }
+
+  .search-form-section {
+    padding: 1.5rem 1rem;
+  }
+
+  .search-input-wrapper {
+    flex-direction: column;
+    border-radius: 1rem;
+    padding: 0;
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 1rem 1rem 1rem 3.5rem;
+    border-radius: 1rem 1rem 0 0;
+  }
+
+  .search-button {
+    width: 100%;
+    border-radius: 0 0 1rem 1rem;
+    padding: 1rem;
+  }
+
+  .search-results-section {
+    padding: 3rem 1rem;
+  }
+
+  .no-results-title {
+    font-size: 1.75rem;
+  }
+}
+</style>

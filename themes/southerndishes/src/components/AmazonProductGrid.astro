@@ -1,0 +1,368 @@
+---
+import type { AmazonProduct } from '../types/recipe';
+
+interface Props {
+  products: AmazonProduct[];
+  columns?: 2 | 3 | 4;
+  className?: string;
+}
+
+const { products, columns = 3, className = '' } = Astro.props;
+---
+
+<div class={`afxshop afxshop-grid ${className}`} data-col={columns}>
+  <ul class="afxshop-list">
+    {products.map((product) => (
+      <li class="afxshop-item" tabindex="0">
+        <div class="afxshop-header">
+          <a
+            href={product.amazon_url}
+            target="_blank"
+            rel="nofollow noopener"
+          >
+            <div class="afxshop-image">
+              <img
+                src={product.image_url}
+                alt={product.title}
+                aria-hidden="true"
+                loading="lazy"
+              />
+            </div>
+            <div class="afxshop-content">
+              <div class="afxshop-title">
+                {product.title}
+              </div>
+            </div>
+          </a>
+        </div>
+        <div class="afxshop-footer">
+          <div class="afxshop-offer">
+            <a
+              href={product.amazon_url}
+              target="_blank"
+              rel="nofollow noopener"
+            >
+              <div class="afxshop-wrap">
+                <div class="afxshop-left">
+                  <img
+                    src="https://upload.wikimedia.org/wikipedia/commons/d/de/Amazon_icon.png"
+                    alt="Amazon"
+                    class="afxshop-amazon-icon"
+                  />
+                  {product.price && (
+                    <span class="afxshop-price">{product.price}</span>
+                  )}
+                </div>
+                <div class="afxshop-btn">
+                  <div class="afxshop-button">
+                    Shop Now
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </a>
+          </div>
+        </div>
+      </li>
+    ))}
+  </ul>
+</div>
+
+<style>
+  .afxshop {
+    margin: 2rem 0;
+    width: 100%;
+  }
+
+  .afxshop-list {
+    display: grid;
+    gap: 1.5rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Grid columns based on data-col attribute */
+  .afxshop-grid[data-col="2"] .afxshop-list {
+    grid-template-columns: repeat(2, 1fr); /* Always 2 columns, even on mobile */
+    gap: 1rem; /* Smaller gap for tighter layout */
+  }
+
+  .afxshop-grid[data-col="3"] .afxshop-list {
+    grid-template-columns: repeat(1, 1fr);
+  }
+
+  .afxshop-grid[data-col="4"] .afxshop-list {
+    grid-template-columns: repeat(2, 1fr); /* 2 columns on mobile */
+  }
+
+  /* Responsive grid */
+  @media (min-width: 640px) {
+    .afxshop-grid[data-col="2"] .afxshop-list {
+      grid-template-columns: repeat(2, 1fr); /* Keep 2 columns */
+      gap: 1.5rem; /* Normal gap on larger screens */
+    }
+
+    .afxshop-grid[data-col="3"] .afxshop-list,
+    .afxshop-grid[data-col="4"] .afxshop-list {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (min-width: 768px) {
+    .afxshop-grid[data-col="3"] .afxshop-list {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .afxshop-grid[data-col="4"] .afxshop-list {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .afxshop-grid[data-col="4"] .afxshop-list {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+
+  .afxshop-item {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .afxshop-item:hover {
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .afxshop-header {
+    flex: 1;
+  }
+
+  .afxshop-header a {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    padding: 1.25rem;
+    height: 100%;
+  }
+
+  .afxshop-image {
+    width: 100%;
+    height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1rem;
+    background: #f9fafb;
+    border-radius: 8px;
+  }
+
+  .afxshop-image img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    transition: transform 0.3s ease;
+  }
+
+  .afxshop-item:hover .afxshop-image img {
+    transform: scale(1.05);
+  }
+
+  /* Medium size for 2-column grid */
+  .afxshop-grid[data-col="2"] .afxshop-image {
+    height: 160px; /* Smaller image height */
+  }
+
+  .afxshop-grid[data-col="2"] .afxshop-header a {
+    padding: 0.875rem; /* Smaller padding */
+  }
+
+  .afxshop-grid[data-col="2"] .afxshop-title {
+    font-size: 0.875rem; /* Smaller font */
+    min-height: 3.5rem;
+    -webkit-line-clamp: 2; /* Show only 2 lines */
+  }
+
+  .afxshop-grid[data-col="2"] .afxshop-wrap {
+    padding: 0.875rem 1rem;
+  }
+
+  .afxshop-grid[data-col="2"] .afxshop-amazon-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  .afxshop-grid[data-col="2"] .afxshop-price {
+    font-size: 1.125rem;
+  }
+
+  .afxshop-grid[data-col="2"] .afxshop-button {
+    padding: 0.5rem 1.125rem;
+    font-size: 0.875rem;
+  }
+
+  .afxshop-grid[data-col="2"] .afxshop-button svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .afxshop-title {
+    font-size: 0.95rem;
+    line-height: 1.4;
+    color: #1f2937;
+    font-weight: 500;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 4rem;
+  }
+
+  .afxshop-footer {
+    border-top: 1px solid #f3f4f6;
+  }
+
+  .afxshop-offer a {
+    display: block;
+    text-decoration: none;
+  }
+
+  .afxshop-wrap {
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: #ffffff;
+    border-top: 1px solid #f3f4f6;
+  }
+
+  .afxshop-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .afxshop-amazon-icon {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+  }
+
+  .afxshop-price {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #111827;
+  }
+
+  .afxshop-btn {
+    flex-shrink: 0;
+  }
+
+  .afxshop-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: linear-gradient(135deg, #ff9146 0%, #ff6b35 100%);
+    color: white;
+    padding: 0.625rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.9375rem;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.25);
+  }
+
+  .afxshop-button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .afxshop-button:hover {
+    background: linear-gradient(135deg, #ff7d2e 0%, #ff5722 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.35);
+  }
+
+  /* Mobile adjustments */
+  @media (max-width: 639px) {
+    .afxshop-wrap {
+      flex-direction: column;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 1rem;
+    }
+
+    .afxshop-left {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .afxshop-amazon-icon {
+      width: 30px;
+      height: 30px;
+    }
+
+    .afxshop-price {
+      font-size: 1.125rem;
+    }
+
+    .afxshop-button {
+      width: 100%;
+      justify-content: center;
+      padding: 0.75rem 1.25rem;
+    }
+
+    /* Extra compact for 2-column grid on mobile */
+    .afxshop-grid[data-col="2"] .afxshop-list {
+      gap: 0.75rem; /* Even tighter gap on mobile */
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-image {
+      height: 120px; /* Much smaller on mobile */
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-header a {
+      padding: 0.5rem; /* Minimal padding */
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-title {
+      font-size: 0.75rem; /* Smaller text */
+      min-height: 2.5rem;
+      line-height: 1.3;
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-wrap {
+      padding: 0.625rem 0.75rem;
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-amazon-icon {
+      width: 24px;
+      height: 24px;
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-price {
+      font-size: 1rem;
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-button {
+      padding: 0.5rem 0.875rem;
+      font-size: 0.8125rem;
+    }
+
+    .afxshop-grid[data-col="2"] .afxshop-button svg {
+      width: 12px;
+      height: 12px;
+    }
+  }
+</style>

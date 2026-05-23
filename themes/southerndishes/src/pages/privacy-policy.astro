@@ -1,0 +1,277 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { DatabaseService } from '../lib/database';
+import { replaceTemplateVariables } from '../lib/utils';
+
+export const prerender = false;
+
+const db = new DatabaseService(Astro.locals.runtime?.env?.DB || {} as any);
+let page;
+let settings: Record<string, string> = {};
+
+try {
+  if (Astro.locals.runtime?.env?.DB) {
+    page = await db.getPageBySlug('privacy-policy');
+    if (!page) return Astro.redirect('/404');
+
+    // Fetch site settings
+    settings = await db.getAllSettings();
+  }
+} catch (error) {
+  console.error('Error fetching page:', error);
+  return Astro.redirect('/404');
+}
+
+if (!page) return Astro.redirect('/404');
+
+const siteName = settings.site_name || 'ChefTaling';
+const siteDomain = settings.site_domain || 'cheftaling.com';
+
+// Replace template variables in content
+const processedContent = replaceTemplateVariables(page.content, settings);
+---
+
+<Layout title={`${page.title} - ${siteName}`} description={page.meta_description || page.title} canonical={Astro.url.toString()}>
+  <!-- Policy Page Hero -->
+  <section class="policy-hero">
+    <div class="policy-hero-container">
+      <p class="policy-greeting">Legal Information</p>
+      <h1 class="policy-hero-title">{page.title}</h1>
+    </div>
+  </section>
+
+  <!-- Policy Content -->
+  <div class="policy-content-section">
+    <div class="policy-content-container">
+      <div class="policy-content">
+        <Fragment set:html={processedContent} />
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style is:global>
+/* Policy Hero */
+.policy-hero {
+  background: linear-gradient(135deg, #fff5f0 0%, #ffe6d5 100%);
+  padding: 4rem 2rem 3rem;
+  text-align: center;
+  border-bottom: 2px solid #ffd0b5;
+}
+
+.policy-hero-container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.policy-greeting {
+  font-family: 'Caveat', cursive;
+  font-size: 2rem;
+  color: #ff7849;
+  margin: 0 0 1rem 0;
+  font-weight: 600;
+}
+
+.policy-hero-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 3rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0;
+  line-height: 1.2;
+}
+
+/* Policy Content */
+.policy-content-section {
+  background: white;
+  padding: 5rem 2rem;
+}
+
+.policy-content-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.policy-content {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  color: #374151;
+  line-height: 1.8;
+  font-size: 1.0625rem;
+}
+
+.policy-content h2 {
+  font-family: 'Abril Fatface', serif;
+  font-size: 2.25rem;
+  font-weight: 400;
+  color: #ff7849;
+  margin-top: 3rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.2;
+}
+
+.policy-content h2:first-child {
+  margin-top: 0;
+}
+
+.policy-content h3 {
+  font-family: 'Abril Fatface', serif;
+  font-size: 1.75rem;
+  font-weight: 400;
+  color: #111827;
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  line-height: 1.3;
+}
+
+.policy-content h4 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #374151;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+.policy-content p {
+  margin-bottom: 1.5rem;
+  color: #374151;
+  line-height: 1.8;
+}
+
+.policy-content strong {
+  font-weight: 700;
+  color: #111827;
+}
+
+.policy-content ul,
+.policy-content ol {
+  margin-bottom: 1.75rem;
+  padding-left: 2rem;
+  color: #374151;
+}
+
+.policy-content ul {
+  list-style-type: disc;
+}
+
+.policy-content ol {
+  list-style-type: decimal;
+}
+
+.policy-content li {
+  margin-bottom: 0.75rem;
+  line-height: 1.8;
+}
+
+.policy-content a {
+  color: #ff7849;
+  text-decoration: underline;
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+
+.policy-content a:hover {
+  color: #f9632b;
+}
+
+.policy-content blockquote {
+  border-left: 4px solid #ff7849;
+  margin: 2rem 0;
+  padding: 1.5rem 2rem;
+  background: #fff5f0;
+  font-style: italic;
+  color: #374151;
+  border-radius: 0.5rem;
+}
+
+.policy-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 2rem 0;
+}
+
+.policy-content th,
+.policy-content td {
+  padding: 1rem;
+  border: 1px solid #ffd0b5;
+  text-align: left;
+}
+
+.policy-content th {
+  background: #fff5f0;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .policy-hero {
+    padding: 3rem 1.5rem 2rem;
+  }
+
+  .policy-greeting {
+    font-size: 1.75rem;
+  }
+
+  .policy-hero-title {
+    font-size: 2.25rem;
+  }
+
+  .policy-content-section {
+    padding: 4rem 1.5rem;
+  }
+
+  .policy-content {
+    font-size: 1rem;
+  }
+
+  .policy-content h2 {
+    font-size: 1.875rem;
+    margin-top: 2rem;
+  }
+
+  .policy-content h3 {
+    font-size: 1.5rem;
+    margin-top: 1.75rem;
+  }
+
+  .policy-content h4 {
+    font-size: 1.125rem;
+    margin-top: 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .policy-hero {
+    padding: 2rem 1rem 1.5rem;
+  }
+
+  .policy-greeting {
+    font-size: 1.5rem;
+  }
+
+  .policy-hero-title {
+    font-size: 1.875rem;
+  }
+
+  .policy-content-section {
+    padding: 3rem 1rem;
+  }
+
+  .policy-content {
+    font-size: 0.9375rem;
+  }
+
+  .policy-content h2 {
+    font-size: 1.625rem;
+  }
+
+  .policy-content h3 {
+    font-size: 1.375rem;
+  }
+
+  .policy-content h4 {
+    font-size: 1.0625rem;
+  }
+}
+</style>

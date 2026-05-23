@@ -1,0 +1,513 @@
+---
+import { DatabaseService } from '../../lib/database';
+import { EzoicPlacements } from '../../lib/ezoic';
+
+export const prerender = false;
+
+export async function getStaticPaths() {
+  return [];
+}
+
+const { slug } = Astro.params;
+
+if (!slug) {
+  return Astro.redirect('/404');
+}
+
+const db = new DatabaseService(Astro.locals.runtime?.env?.DB || {} as any);
+
+let recipe;
+let settings: Record<string, string> = {};
+
+try {
+  if (Astro.locals.runtime?.env?.DB) {
+    [recipe, settings] = await Promise.all([
+      db.getRecipeBySlug(slug),
+      db.getAllSettings()
+    ]);
+
+    if (!recipe) {
+      return Astro.redirect('/404');
+    }
+  }
+} catch (error) {
+  console.error('Error fetching recipe:', error);
+  return Astro.redirect('/404');
+}
+
+if (!recipe) {
+  return Astro.redirect('/404');
+}
+
+// Custom code injection points
+const customHeadCode = settings.custom_head_code || '';
+const customBodyTopCode = settings.custom_body_top_code || '';
+const customBodyBottomCode = settings.custom_body_bottom_code || '';
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Print: {recipe.title}</title>
+
+  <!-- Custom Head Code Injection -->
+  {customHeadCode && <Fragment set:html={customHeadCode} />}
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Arial, sans-serif;
+      line-height: 1.6;
+      color: #1f2937;
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fbbf24 100%);
+      padding: 2rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 1.5rem;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+      overflow: hidden;
+    }
+
+    .page-header {
+      background: linear-gradient(135deg, #2ec9ad 0%, #24a38a 100%);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: white;
+      text-decoration: none;
+      font-weight: 600;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      transition: all 0.3s ease;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .back-link:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: translateX(-4px);
+    }
+
+    .print-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      background: white;
+      color: #2ec9ad;
+      border: none;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 700;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      transition: all 0.3s ease;
+    }
+
+    .print-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    .content {
+      padding: 3rem;
+    }
+
+    .print-header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 3px solid #f3f4f6;
+    }
+
+    .print-header h1 {
+      font-size: 2.5rem;
+      font-weight: 800;
+      margin-bottom: 1rem;
+      color: #111827;
+      line-height: 1.2;
+    }
+
+    .recipe-meta {
+      display: flex;
+      justify-content: center;
+      gap: 3rem;
+      margin-top: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .meta-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: #2ec9ad;
+    }
+
+    .meta-label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .recipe-section {
+      margin-bottom: 3rem;
+      page-break-inside: avoid;
+    }
+
+    .recipe-section h2 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      margin-bottom: 1.5rem;
+      color: #111827;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .recipe-section h2::before {
+      content: '';
+      width: 4px;
+      height: 2rem;
+      background: linear-gradient(135deg, #2ec9ad 0%, #24a38a 100%);
+      border-radius: 2px;
+    }
+
+    .ingredients-list {
+      list-style: none;
+      padding-left: 0;
+      background: #f9fafb;
+      padding: 1.5rem;
+      border-radius: 1rem;
+    }
+
+    .ingredients-list li {
+      padding: 1rem;
+      margin-bottom: 0.5rem;
+      background: white;
+      border-radius: 0.5rem;
+      page-break-inside: avoid;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      transition: all 0.2s ease;
+      border: 2px solid transparent;
+    }
+
+    .ingredients-list li:hover {
+      border-color: #2ec9ad;
+      transform: translateX(4px);
+    }
+
+    .ingredient-checkbox {
+      width: 1.25rem;
+      height: 1.25rem;
+      border: 2.5px solid #2ec9ad;
+      border-radius: 0.25rem;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .ingredient-text {
+      color: #374151;
+      font-weight: 500;
+    }
+
+    .instructions-list {
+      list-style: none;
+      counter-reset: step-counter;
+      padding-left: 0;
+    }
+
+    .instructions-list li {
+      counter-increment: step-counter;
+      margin-bottom: 2rem;
+      page-break-inside: avoid;
+      position: relative;
+      padding-left: 4rem;
+      padding: 1.5rem;
+      padding-left: 5rem;
+      background: #f9fafb;
+      border-radius: 1rem;
+      border-left: 4px solid #2ec9ad;
+    }
+
+    .instructions-list li::before {
+      content: counter(step-counter);
+      position: absolute;
+      left: 1.5rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 2.5rem;
+      height: 2.5rem;
+      background: linear-gradient(135deg, #2ec9ad 0%, #24a38a 100%);
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.125rem;
+      box-shadow: 0 4px 12px rgba(234, 88, 12, 0.3);
+    }
+
+    .instruction-text {
+      color: #374151;
+      font-weight: 500;
+      line-height: 1.8;
+    }
+
+    .notes-section {
+      background: linear-gradient(135deg, #e8fdf9 0%, #c2f9f0 100%);
+      padding: 2rem;
+      border-radius: 1rem;
+      border-left: 4px solid #2ec9ad;
+      margin-top: 2rem;
+      box-shadow: 0 4px 12px rgba(234, 88, 12, 0.1);
+    }
+
+    .notes-section h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      color: #111827;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .notes-section p {
+      color: #374151;
+      font-weight: 500;
+      line-height: 1.7;
+    }
+
+    .author-credit {
+      margin-top: 3rem;
+      padding-top: 2rem;
+      border-top: 3px solid #f3f4f6;
+      text-align: center;
+      color: #6b7280;
+      font-size: 0.9375rem;
+    }
+
+    .author-credit strong {
+      color: #111827;
+      font-weight: 700;
+    }
+
+    /* Hide Ezoic ads on print */
+    .ezoic-ad {
+      display: block;
+    }
+
+    @media print {
+      body {
+        padding: 0;
+        background: white;
+      }
+
+      .container {
+        box-shadow: none;
+        border-radius: 0;
+      }
+
+      .page-header {
+        background: white;
+        border-bottom: 2px solid #e5e7eb;
+      }
+
+      .page-header * {
+        color: #000 !important;
+      }
+
+      .print-button,
+      .back-link {
+        display: none !important;
+      }
+
+      .recipe-section {
+        page-break-inside: avoid;
+      }
+
+      .ingredients-list,
+      .instructions-list li,
+      .notes-section {
+        background: white !important;
+      }
+
+      .meta-value {
+        color: #000 !important;
+      }
+
+      /* Hide Ezoic ads when printing */
+      .ezoic-ad {
+        display: none !important;
+      }
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 0;
+      }
+
+      .container {
+        border-radius: 0;
+      }
+
+      .content {
+        padding: 2rem 1.5rem;
+      }
+
+      .print-header h1 {
+        font-size: 2rem;
+      }
+
+      .recipe-meta {
+        gap: 1.5rem;
+      }
+
+      .instructions-list li {
+        padding-left: 4rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Custom Body Top Code Injection -->
+  {customBodyTopCode && <Fragment set:html={customBodyTopCode} />}
+
+  <!-- Ezoic Ad: Top of Page (101) -->
+  <div id="ezoic-pub-ad-placeholder-101" class="ezoic-ad"></div>
+
+  <div class="container">
+    <div class="page-header">
+      <a href={`/${recipe.slug}/`} class="back-link">
+        ← Back to Recipe
+      </a>
+      <button onclick="window.print()" class="print-button">
+        🖨️ Print Recipe
+      </button>
+    </div>
+
+    <div class="content">
+      <div class="print-header">
+        <h1>{recipe.title}</h1>
+
+        <!-- Ezoic Ad: Under Page Title (102) -->
+        <div id="ezoic-pub-ad-placeholder-102" class="ezoic-ad"></div>
+
+        <div class="recipe-meta">
+          {recipe.recipe_data.prep_time && (
+            <div class="meta-item">
+              <div class="meta-value">{recipe.recipe_data.prep_time}</div>
+              <div class="meta-label">Prep (mins)</div>
+            </div>
+          )}
+          {recipe.recipe_data.cook_time && (
+            <div class="meta-item">
+              <div class="meta-value">{recipe.recipe_data.cook_time}</div>
+              <div class="meta-label">Cook (mins)</div>
+            </div>
+          )}
+          {recipe.recipe_data.servings && (
+            <div class="meta-item">
+              <div class="meta-value">{recipe.recipe_data.servings}</div>
+              <div class="meta-label">Servings</div>
+            </div>
+          )}
+          {recipe.recipe_data.calories && (
+            <div class="meta-item">
+              <div class="meta-value">{recipe.recipe_data.calories}</div>
+              <div class="meta-label">Calories</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {recipe.recipe_data.ingredients && recipe.recipe_data.ingredients.length > 0 && (
+        <div class="recipe-section">
+          <h2>Ingredients</h2>
+          <ul class="ingredients-list">
+            {recipe.recipe_data.ingredients.map((ingredient) => (
+              <li>
+                <span class="ingredient-checkbox"></span>
+                <span class="ingredient-text">
+                  {ingredient.amount && `${ingredient.amount} `}
+                  {ingredient.unit && `${ingredient.unit} `}
+                  {ingredient.name}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {recipe.recipe_data.instructions && recipe.recipe_data.instructions.length > 0 && (
+        <div class="recipe-section">
+          <h2>Instructions</h2>
+          <ol class="instructions-list">
+            {recipe.recipe_data.instructions.map((instruction) => (
+              <li>
+                <span class="instruction-text">{instruction}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {recipe.recipe_data.notes && (
+        <div class="notes-section">
+          <h3>💡 Chef's Notes</h3>
+          <p>{recipe.recipe_data.notes}</p>
+        </div>
+      )}
+
+      {recipe.author && (
+        <div class="author-credit">
+          Recipe by <strong>{recipe.author.name}</strong>
+          {recipe.author.title && ` - ${recipe.author.title}`}
+        </div>
+      )}
+    </div>
+  </div>
+
+  <!-- Ezoic Ad: Bottom of Page (103) -->
+  <div id="ezoic-pub-ad-placeholder-103" class="ezoic-ad"></div>
+
+  <!-- Custom Body Bottom Code Injection -->
+  {customBodyBottomCode && <Fragment set:html={customBodyBottomCode} />}
+
+  <!-- Ezoic showAds() Script -->
+  <script>
+    ezstandalone.cmd.push(function () {
+      ezstandalone.showAds(101, 102, 103);
+    });
+  </script>
+</body>
+</html>

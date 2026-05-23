@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: 'Karla', system-ui, sans-serif;
+    @apply text-gray-800;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Abril Fatface', serif;
+    @apply text-gray-900;
+  }
+}
+
+/* Font Families */
+.font-handwriting {
+  font-family: 'Caveat', cursive;
+}
+
+.font-heading {
+  font-family: 'Abril Fatface', serif;
+}
+
+/* Custom styles for recipe website */
+.recipe-card-hover {
+  @apply transform hover:-translate-y-1 hover:shadow-xl transition-all duration-300;
+}
+
+.recipe-gradient {
+  background: linear-gradient(135deg, #ff7849 0%, #fa5252 100%);
+}
+
+/* Coral accent gradient */
+.coral-gradient {
+  background: linear-gradient(135deg, #ff9466 0%, #ff7849 100%);
+}
+
+/* Print styles for recipes */
+@media print {
+  .print-hidden {
+    display: none !important;
+  }
+
+  .recipe-card {
+    break-inside: avoid;
+  }
+
+  body {
+    font-size: 12pt;
+    line-height: 1.4;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    break-after: avoid;
+    break-inside: avoid;
+  }
+
+  .recipe-instructions {
+    break-inside: avoid;
+  }
+
+  .recipe-ingredients {
+    break-inside: avoid;
+  }
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Focus styles for accessibility */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2;
+}
+
+/* Animation keyframes */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out;
+}
+
+/* Custom utilities */
+.text-balance {
+  text-wrap: balance;
+}
+
+.container-padding {
+  @apply px-4 sm:px-6 lg:px-8;
+}
+
+.section-spacing {
+  @apply py-12 lg:py-16;
+}
+
+/* Recipe specific styles */
+.recipe-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 1rem;
+}
+
+.recipe-ingredient-checkbox:checked + span {
+  @apply line-through text-gray-400;
+}
+
+/* Hero section gradient */
+.hero-gradient {
+  background: linear-gradient(135deg, #e8fdf9 0%, #c2f9f0 50%, #9df5e7 100%);
+}
+
+/* Custom button styles */
+.btn-primary {
+  @apply inline-flex items-center px-6 py-3 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2;
+}
+
+.btn-secondary {
+  @apply inline-flex items-center px-6 py-3 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-lg border border-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2;
+}
+
+/* Loading states */
+.loading-skeleton {
+  @apply animate-pulse bg-gray-200 rounded;
+}
+
+/* Image optimization */
+img {
+  @apply max-w-full h-auto;
+}
+
+.recipe-image {
+  @apply object-cover w-full h-full;
+}
+
+/* Typography enhancements */
+.prose-recipe h2 {
+  @apply text-2xl font-bold text-gray-900 mt-8 mb-4 border-b border-gray-200 pb-2;
+}
+
+.prose-recipe h3 {
+  @apply text-xl font-semibold text-gray-900 mt-6 mb-3;
+}
+
+.prose-recipe p {
+  @apply mb-4 leading-relaxed;
+}
+
+.prose-recipe ul,
+.prose-recipe ol {
+  @apply mb-4 pl-6;
+}
+
+.prose-recipe li {
+  @apply mb-2;
+}
+
+.prose-recipe blockquote {
+  @apply border-l-4 border-brand-500 pl-4 italic text-gray-600 my-6 bg-brand-50 py-4 rounded-r-lg;
+}
+
+/* Hide EZ TOC container */
+div#ez-toc-container {
+  display: none;
+}
