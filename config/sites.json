@@ -5,41 +5,21 @@
       "id": "P01",
       "display_name": "A1-Pinterest_01",
       "out_dir": "A1-Pinterest_01-out",
-      "templates_dir": "templates-html",
-      "openai_api_key": "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",
-      "wordpress_url": "https://lowcarbdaily.com",
+      "templates_dir": "templates",
+      "openai_api_key": "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",
+      "wordpress_url": "https://easydessertsdaily.com",
       "wordpress_user": "admin",
       "settings": {
-        "category_id_mapping": {
-          "High Protein Low Carb Meals": 5,
-          "Low Carb Breakfasts": 2,
-          "Low Carb Dinner Recipes": 3,
-          "Low Carb Snacks & Desserts": 4
-        },
-        "pinterest_boards": [
-          "Keto Snack Inspiration",
-          "Sugar-Free Sweet Ideas",
-          "Low Carb Baking Recipes",
-          "Healthy Keto Dinners",
-          "Easy Family Meal Ideas",
-          "Quick Low Carb Recipes",
-          "Delicious Recipes to Try",
-          "Fast Healthy Dinner Ideas",
-          "Easy Keto Appetizers",
-          "Refreshing Summer Drink Ideas",
-          "Low Sugar Smoothies",
-          "Healthy Drink Recipes",
-          "Craving-Friendly Low Carb Ideas"
-        ]
+        "category_id_mapping": "{\"Cookie & Brownie Recipes\": 3, \"\tEasy Cake Recipes\": 5, \"No Bake Desserts\": 2, \"Quick Dessert Ideas\": 4}"
       },
-      "wordpress_app_password": "duIY g9Ox 9R53 lzEN vLX2 eobe"
+      "wordpress_app_password": "tLLr H9A1 OphK KH8S qdfN T6N2"
     },
     {
       "id": "P02",
       "display_name": "A2-Pinterest_02",
       "out_dir": "A2-Pinterest_02-out",
-      "templates_dir": "templates-html",
-      "openai_api_key": "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",
+      "templates_dir": "templates",
+      "openai_api_key": "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",
       "wordpress_url": "https://lowcarbdaily.com",
       "wordpress_user": "admin",
       "settings": {
@@ -48,24 +28,45 @@
           "Low Carb Breakfasts": 2,
           "Low Carb Dinner Recipes": 3,
           "Low Carb Snacks & Desserts": 4
-        },
-        "pinterest_boards": [
-          "Low Carb Snacks & Bites",
-          "High Protein Desserts",
-          "Keto Cakes & Cookies",
-          "Healthy Low Carb Dinners",
-          "Family-Friendly Low Carb Meals",
-          "Easy Low Carb Recipes",
-          "Recipes to Try Today",
-          "Quick Keto Dinner Ideas",
-          "Easy Low Carb Appetizers",
-          "Summer Low Carb Drinks",
-          "Smoothies & Sugar-Free Drinks",
-          "Refreshing Keto Beverages",
-          "Healthy Food Cravings"
-        ]
+        }
       },
-      "wordpress_app_password": "duIY g9Ox 9R53 lzEN vLX2 eobe"
+      "wordpress_app_password": "Rh3V 1YcP baFk XKoS rlen nVNk"
+    },
+    {
+      "id": "P03",
+      "display_name": "A3-Pinterest_03",
+      "out_dir": "A3-Pinterest_03-out",
+      "templates_dir": "templates",
+      "openai_api_key": "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",
+      "wordpress_url": "https://airfryermealprep.com",
+      "wordpress_user": "admin",
+      "settings": {
+        "category_id_mapping": {
+          "Air Fryer Chicken Recipes": 5,
+          "Air Fryer Meal Prep": 2,
+          "Easy Air Fryer Dinners": 4,
+          "Healthy Air Fryer Recipes": 3
+        }
+      },
+      "wordpress_app_password": "PXbT iN19 OUJN bVJb mu5X waxD"
+    },
+    {
+      "id": "P04",
+      "display_name": "A4-Pinterest_04",
+      "out_dir": "A4-Pinterest_04-out",
+      "templates_dir": "templates",
+      "openai_api_key": "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",
+      "wordpress_url": "https://healthybreakfastdaily.com",
+      "wordpress_user": "admin",
+      "settings": {
+        "category_id_mapping": {
+          "Breakfast for Weight Loss": 1,
+          "Healthy Breakfast Recipes": 5,
+          "High Protein Breakfast": 3,
+          "Quick Breakfast Ideas": 2
+        }
+      },
+      "wordpress_app_password": "NxI2 YCvp gJt1 cd2M RtE1 mRrs"
     }
   ]
 }

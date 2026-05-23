@@ -246,6 +246,17 @@ def _extract_useapi_urls(job_json: dict):
     resp = job_json.get("response") or {}
     if isinstance(resp, dict):
         atts = resp.get("attachments") or []
+        # Discord nested message attachments fallback
+        msg = resp.get("message") or {}
+        if isinstance(msg, dict):
+            msg_atts = msg.get("attachments") or []
+            if isinstance(msg_atts, list):
+                for att in msg_atts:
+                    if not isinstance(att, dict):
+                        continue
+                    u = att.get("proxy_url") or att.get("url")
+                    if isinstance(u, str) and u.startswith("http"):
+                        urls.append(u)
         if isinstance(atts, list):
             for att in atts:
                 if not isinstance(att, dict):
@@ -319,6 +330,12 @@ def get_status_once(jobid: str):
             if status in ("completed", "done", "success"):
                 return "completed", data
             if status in ("failed", "error", "moderated"):
+                urls = _extract_useapi_urls(data)
+
+                if urls:
+                    print("⚠️ Status says failed but image assets exist, treating as completed", flush=True)
+                    return "completed", data
+
                 return "failed", data
             if status in ("pending", "queued", "running", "in_progress", "processing"):
                 return "pending", data
