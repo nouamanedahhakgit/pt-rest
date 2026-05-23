@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ site.title }}</title>
+  <meta name="description" content="{{ site.description }}" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/">{{ site.title }}</a>
+      {% if categories %}
+      <nav class="cats">
+        {% for c in categories %}<a href="#{{ c|slug }}">{{ c }}</a>{% endfor %}
+      </nav>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>{{ site.title }}</h1>
+      <p>{{ site.description }}</p>
+    </section>
+
+    <section class="grid">
+      {% for a in articles %}
+      <article class="card">
+        <a class="card-link" href="/article/{{ a.slug }}/">
+          {% if a.featured_image %}<img loading="lazy" src="{{ a.featured_image }}" alt="{{ a.title }}" />{% endif %}
+          <div class="card-body">
+            {% if a.category %}<span class="cat">{{ a.category }}</span>{% endif %}
+            <h2>{{ a.title }}</h2>
+            {% if a.excerpt %}<p>{{ a.excerpt }}</p>{% endif %}
+          </div>
+        </a>
+      </article>
+      {% endfor %}
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <small>&copy; {{ site.year }} {{ site.title }} &middot; built {{ site.built_at }} &middot; v{{ site.version }}</small>
+    </div>
+  </footer>
+</body>
+</html>

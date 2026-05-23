@@ -1,0 +1,299 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+const title = '404 - Page Not Found';
+const description = 'Sorry, the page you are looking for does not exist. Browse our delicious recipes instead.';
+---
+
+<Layout title={title} description={description}>
+  <div class="error-404-page">
+    <div class="error-404-container">
+      <div class="error-404-content">
+        <!-- Icon -->
+        <div class="error-icon-wrapper">
+          <svg class="error-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+
+        <!-- 404 Number -->
+        <h1 class="error-404-number">404</h1>
+
+        <!-- Handwritten Text -->
+        <p class="error-handwriting">Oops!</p>
+
+        <!-- Title -->
+        <h2 class="error-404-title">Page Not Found</h2>
+
+        <!-- Description -->
+        <p class="error-404-description">
+          The recipe you're looking for seems to have been misplaced. Don't worry, we have plenty of other delicious options for you!
+        </p>
+
+        <!-- Action Buttons -->
+        <div class="error-404-actions">
+          <a href="/" class="error-btn primary">
+            <svg class="btn-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+            Go to Homepage
+          </a>
+
+          <a href="/recipes" class="error-btn secondary">
+            <svg class="btn-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            Browse Recipes
+          </a>
+        </div>
+
+        <!-- Popular Categories -->
+        <div class="error-categories">
+          <h3 class="categories-label">Popular Categories</h3>
+          <div class="categories-links">
+            <a href="/category/desserts" class="category-link">Desserts</a>
+            <a href="/category/dinners" class="category-link">Dinners</a>
+            <a href="/category/appetizers" class="category-link">Appetizers</a>
+            <a href="/category/drinks" class="category-link">Drinks</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style is:global>
+.error-404-page {
+  min-height: 70vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  background: linear-gradient(to bottom, #fff5f0 0%, white 100%);
+}
+
+.error-404-container {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.error-404-content {
+  text-align: center;
+}
+
+.error-icon-wrapper {
+  width: 8rem;
+  height: 8rem;
+  margin: 0 auto 2rem;
+  background: linear-gradient(135deg, #ffe6d5 0%, #ffd0b5 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 30px rgba(255, 120, 73, 0.2);
+}
+
+.error-icon {
+  width: 4rem;
+  height: 4rem;
+  color: #ff7849;
+}
+
+.error-404-number {
+  font-family: 'Abril Fatface', serif;
+  font-size: 8rem;
+  font-weight: 400;
+  color: #ff7849;
+  margin: 0 0 1rem 0;
+  line-height: 1;
+}
+
+.error-handwriting {
+  font-family: 'Caveat', cursive;
+  font-size: 3rem;
+  color: #ff7849;
+  margin: 0 0 1rem 0;
+  font-weight: 600;
+}
+
+.error-404-title {
+  font-family: 'Abril Fatface', serif;
+  font-size: 2.5rem;
+  font-weight: 400;
+  color: #111827;
+  margin: 0 0 1.5rem 0;
+  line-height: 1.2;
+}
+
+.error-404-description {
+  font-size: 1.125rem;
+  line-height: 1.7;
+  color: #6b7280;
+  margin: 0 0 3rem 0;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.error-404-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  margin-bottom: 4rem;
+}
+
+.error-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 2rem;
+  border-radius: 9999px;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+}
+
+.error-btn.primary {
+  background: linear-gradient(135deg, #ff7849 0%, #f9632b 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.3);
+}
+
+.error-btn.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 120, 73, 0.4);
+}
+
+.error-btn.secondary {
+  background: white;
+  color: #ff7849;
+  border: 2px solid #ff7849;
+  box-shadow: 0 4px 12px rgba(255, 120, 73, 0.15);
+}
+
+.error-btn.secondary:hover {
+  background: #fff5f0;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 120, 73, 0.25);
+}
+
+.btn-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.error-categories {
+  padding-top: 3rem;
+  border-top: 2px solid #ffd0b5;
+}
+
+.categories-label {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #ff7849;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 0 0 1.5rem 0;
+}
+
+.categories-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.category-link {
+  padding: 0.75rem 1.5rem;
+  background: #fefdfb;
+  color: #6b7280;
+  border: 2px solid #ffd0b5;
+  border-radius: 9999px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  transition: all 0.3s ease;
+}
+
+.category-link:hover {
+  background: #fff5f0;
+  color: #ff7849;
+  border-color: #ff9466;
+  transform: translateY(-2px);
+}
+
+@media (max-width: 768px) {
+  .error-404-page {
+    padding: 3rem 1.5rem;
+  }
+
+  .error-icon-wrapper {
+    width: 6rem;
+    height: 6rem;
+  }
+
+  .error-icon {
+    width: 3rem;
+    height: 3rem;
+  }
+
+  .error-404-number {
+    font-size: 6rem;
+  }
+
+  .error-handwriting {
+    font-size: 2.5rem;
+  }
+
+  .error-404-title {
+    font-size: 2rem;
+  }
+
+  .error-404-description {
+    font-size: 1rem;
+  }
+
+  .error-404-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .error-btn {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .error-404-page {
+    padding: 2rem 1rem;
+  }
+
+  .error-404-number {
+    font-size: 5rem;
+  }
+
+  .error-handwriting {
+    font-size: 2rem;
+  }
+
+  .error-404-title {
+    font-size: 1.75rem;
+  }
+
+  .error-btn {
+    padding: 0.875rem 1.75rem;
+    font-size: 0.9375rem;
+  }
+
+  .categories-links {
+    flex-direction: column;
+  }
+
+  .category-link {
+    width: 100%;
+    text-align: center;
+  }
+}
+</style>

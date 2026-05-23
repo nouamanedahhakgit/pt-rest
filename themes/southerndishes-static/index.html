@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ site.title }} — Delicious Recipes for Every Occasion</title>
+  <meta name="description" content="{{ site.description }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Karla:wght@300;400;500;600;700;800&family=Caveat:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="{{ site.title }}" />
+  <meta property="og:description" content="{{ site.description }}" />
+</head>
+<body>
+
+{% set active_page = "home" %}
+{% include "_header.html" %}
+
+{% set featured = articles[0] if articles else None %}
+
+<!-- ===== HERO ===== -->
+{% if featured %}
+<section class="hero">
+  <div class="wrap-narrow">
+    <div class="hero-grid">
+      <div class="hero-image">
+        <a href="{{ featured.url }}">
+          {% if featured.featured_image %}<img src="{{ featured.featured_image }}" alt="{{ featured.title }}" loading="eager" />{% endif %}
+          <span class="badge">Featured Recipe</span>
+        </a>
+      </div>
+      <div class="hero-content">
+        <p class="hero-eyebrow">Today's Special</p>
+        <h1>{{ featured.title }}</h1>
+        <p>{{ featured.excerpt or "Discover this amazing recipe that will become your new favorite!" }}</p>
+        <div class="hero-buttons">
+          <a class="btn btn-primary btn-lg" href="{{ featured.url }}">Get Recipe
+            <svg class="arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+          </a>
+          <a class="btn btn-outline btn-lg" href="/recipes/">Browse All</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ===== FEATURED CATEGORY: first non-featured category ===== -->
+{% if categories and articles|length > 1 %}
+{% set fc_name = categories[0] %}
+{% set fc_articles = [] %}
+{% for a in articles %}{% if a.category == fc_name and (not featured or a.slug != featured.slug) %}{% set _ = fc_articles.append(a) %}{% endif %}{% endfor %}
+{% if fc_articles %}
+<section class="fc-section">
+  <div class="wrap">
+    <div class="fc-grid">
+      <div class="fc-left">
+        <span class="badge">YUMMY!</span>
+        <h2>{{ fc_name }}</h2>
+        <p>Explore our hand-picked {{ fc_name|lower }} — each one tested, photographed, and ready for your kitchen.</p>
+        {% if fc_articles[0].featured_image %}
+        <div class="featured-img"><a href="{{ fc_articles[0].url }}"><img src="{{ fc_articles[0].featured_image }}" alt="{{ fc_articles[0].title }}" loading="lazy"/></a></div>
+        {% endif %}
+        <a class="btn btn-primary" href="/category/{{ fc_name|slug }}/">More {{ fc_name }}
+          <svg class="arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+        </a>
+      </div>
+      <div class="fc-right">
+        {% for a in fc_articles[1:7] %}{% include "_card.html" %}{% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+
+<!-- ===== CATEGORIES RING ===== -->
+{% if categories %}
+<section class="section section-grad">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">What are you craving?</p>
+      <h2>Recipe Categories</h2>
+      <p>Explore our delicious collection of recipes organized by category</p>
+    </div>
+    <div class="cats-row">
+      {% for c in categories %}
+      <a class="cat-pill" href="/category/{{ c|slug }}/">
+        <div class="ring">
+          <img src="https://cdn-icons-png.flaticon.com/128/1046/1046857.png" alt="{{ c }}" loading="lazy" />
+        </div>
+        <h3>{{ c }}</h3>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ===== ABOUT ME ===== -->
+<section class="section section-white">
+  <div class="wrap-narrow">
+    <div class="about-grid">
+      <div class="about-img">
+        {% if default_author.image_url %}<img src="{{ default_author.image_url }}" alt="{{ default_author.name }}" loading="lazy"/>{% endif %}
+      </div>
+      <div class="about-text">
+        <p class="hand">Nice to meet you!</p>
+        <h2>Hi, I'm {{ default_author.name }}!</h2>
+        <p>{{ default_author.bio }}</p>
+        <a class="btn btn-primary" href="/author/{{ default_author.slug }}/">
+          Learn More About Me
+          <svg class="arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== BIG SEARCH ===== -->
+<section class="big-search">
+  <div class="wrap">
+    <p class="hand">Looking for something?</p>
+    <h3>Search Our Recipes</h3>
+    <form action="#" method="GET" onsubmit="return false;">
+      <input type="search" name="q" placeholder="Search for recipes…" autocomplete="off" />
+      <button type="submit" aria-label="Search">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      </button>
+    </form>
+  </div>
+</section>
+
+<!-- ===== LATEST RECIPES ===== -->
+{% if articles %}
+<section id="latest" class="section section-cream">
+  <div class="wrap-narrow">
+    <div class="section-head">
+      <p class="eyebrow">Fresh from the kitchen</p>
+      <h2>Latest Recipes</h2>
+      <p>Check out our newest additions — tried, tested, and absolutely delicious!</p>
+    </div>
+    <div class="recipes-grid">
+      {% for a in articles[:12] %}{% include "_card.html" %}{% endfor %}
+    </div>
+    <div style="text-align:center;margin-top:48px">
+      <a class="btn btn-primary btn-lg" href="/recipes/">View All Recipes
+        <svg class="arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% include "_footer.html" %}
+</body>
+</html>

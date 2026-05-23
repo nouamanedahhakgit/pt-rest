@@ -1,0 +1,487 @@
+---
+import '../styles/global.css';
+import { DatabaseService } from '../lib/database';
+import {
+  type AdProvider,
+  type AdSettings,
+  getHBAgencyStyles,
+  getHBAgencyFloorAd,
+  getHBAgencyInterstitial,
+  getAdProviderScript,
+  getAdPlaceholder,
+  getEzoicAboveFoldIds
+} from '../lib/ads';
+
+export interface Props {
+  title: string;
+  description?: string;
+  image?: string;
+  canonical?: string;
+  jsonLd?: any;
+}
+
+const {
+  title,
+  description = "Discover delicious recipes for every occasion. From quick weeknight dinners to special celebration meals.",
+  image = "/images/default-og.jpg",
+  canonical,
+  jsonLd
+} = Astro.props;
+
+// Fetch site settings
+const db = new DatabaseService(Astro.locals.runtime?.env?.DB || {} as any);
+let settings: Record<string, string> = {};
+try {
+  if (Astro.locals.runtime?.env?.DB) {
+    settings = await db.getAllSettings();
+  }
+} catch (error) {
+  console.error('Error fetching settings:', error);
+}
+
+const siteName = settings.site_name || 'ChefTaling';
+const siteDomain = settings.site_domain || 'cheftaling.com';
+const siteDescription = settings.site_description || 'Discover delicious recipes for every occasion. From quick weeknight dinners to special celebration meals.';
+const siteLogo = settings.site_logo || '';
+const facebookUrl = settings.facebook_url || 'https://facebook.com';
+const pinterestUrl = settings.pinterest_url || 'https://pinterest.com';
+
+// Custom code injection points
+const customHeadCode = settings.custom_head_code || '';
+const customBodyTopCode = settings.custom_body_top_code || '';
+const customBodyBottomCode = settings.custom_body_bottom_code || '';
+const customFooterCode = settings.custom_footer_code || '';
+
+// Ad provider settings
+const adProvider = (settings.ad_provider || 'ezoic') as AdProvider;
+const adSettings = settings as AdSettings;
+const hbagencyScriptUrl = settings.hbagency_script_url || '';
+
+// Get HBAgency components if using HBAgency
+const hbAgencyStyles = adProvider === 'hbagency' ? getHBAgencyStyles() : '';
+const hbAgencyFloorAd = adProvider === 'hbagency' ? getHBAgencyFloorAd(adSettings) : '';
+const hbAgencyInterstitial = adProvider === 'hbagency' ? getHBAgencyInterstitial(adSettings) : '';
+
+// Get Ezoic above-fold IDs for immediate loading
+const ezoicAboveFoldIds = getEzoicAboveFoldIds(adSettings);
+
+// Get ad provider init script
+const adInitScript = getAdProviderScript(adProvider);
+
+// Get ad placeholders
+const topOfPageAd = getAdPlaceholder('top_of_page', adProvider, false, adSettings);
+const bottomOfPageAd = getAdPlaceholder('bottom_of_page', adProvider, true, adSettings);
+const bottomOfPageAltAd = getAdPlaceholder('bottom_of_page_alt', adProvider, true, adSettings);
+
+const fullTitle = title.includes('Recipe Website') ? title : `${title} | ${siteName}`;
+const canonicalUrl = canonical || Astro.url.toString();
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="description" content={description} />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content={Astro.generator} />
+
+    <title>{fullTitle}</title>
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href={canonicalUrl} />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={image} />
+    <meta property="og:site_name" content={siteName} />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content={canonicalUrl} />
+    <meta property="twitter:title" content={fullTitle} />
+    <meta property="twitter:description" content={description} />
+    <meta property="twitter:image" content={image} />
+
+    <!-- JSON-LD Structured Data -->
+    {jsonLd && (
+      <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+    )}
+
+    <!-- Critical CSS: Prevent FOUT with system font fallbacks -->
+    <style>
+      body { font-family: helvetica, sans-serif; }
+      h1, h2, h3, h4, h5, h6 { font-family: helvetica, sans-serif; }
+    </style>
+
+    <!-- Preconnect to font providers for faster DNS resolution -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <!-- Load Google Fonts asynchronously to avoid render-blocking -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Karla:wght@300;400;500;600;700;800&family=Caveat:wght@400;500;600;700&display=swap"
+      onload="this.onload=null;this.rel='stylesheet'"
+    >
+    <noscript>
+      <link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Karla:wght@300;400;500;600;700;800&family=Caveat:wght@400;500;600;700&display=swap" rel="stylesheet">
+    </noscript>
+
+    <!-- HBAgency Styles (if using HBAgency) -->
+    {hbAgencyStyles && <Fragment set:html={hbAgencyStyles} />}
+
+    <!-- HBAgency Script (if using HBAgency) -->
+    {adProvider === 'hbagency' && hbagencyScriptUrl && (
+      <script async src={hbagencyScriptUrl}></script>
+    )}
+
+    <!-- Custom Head Code Injection -->
+    {customHeadCode && <Fragment set:html={customHeadCode} />}
+
+    <!-- Ezoic Ad Provider Script (lazy loading for below-fold) -->
+    {adProvider === 'ezoic' && adInitScript && <Fragment set:html={adInitScript} />}
+
+    <!-- Ezoic Above-Fold Script (load above-fold ads immediately) -->
+    {adProvider === 'ezoic' && ezoicAboveFoldIds.length > 0 && (
+      <script define:vars={{ ezoicAboveFoldIds }}>
+        if (typeof ezstandalone !== 'undefined') {
+          ezstandalone.cmd.push(function() {
+            ezstandalone.showAds(ezoicAboveFoldIds);
+          });
+        }
+      </script>
+    )}
+  </head>
+  <body class="min-h-screen bg-cream-50 text-gray-800">
+    <!-- Custom Body Top Code Injection -->
+    {customBodyTopCode && <Fragment set:html={customBodyTopCode} />}
+
+    <header class="bg-white border-b-2 border-coral-100">
+      <!-- Top Bar -->
+      <div class="hidden md:block bg-white border-b border-coral-100">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div class="flex justify-end items-center py-3 gap-6">
+            <a href="/about-us" class="text-sm text-gray-700 hover:text-coral-600 transition-colors font-medium flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              About Us
+            </a>
+            <a href="/contact-us" class="text-sm text-gray-700 hover:text-coral-600 transition-colors font-medium flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+              </svg>
+              Contact Us
+            </a>
+            <div class="h-4 w-px bg-coral-200"></div>
+            <a href={pinterestUrl} target="_blank" rel="noopener noreferrer" class="text-coral-600 hover:text-coral-700 transition-all hover:scale-110" aria-label="Follow us on Pinterest">
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/>
+              </svg>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Navigation -->
+      <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between items-center h-20">
+          <!-- Logo -->
+          <div class="flex-shrink-0">
+            <a href="/" class="flex items-center group">
+              {siteLogo ? (
+                <img src={siteLogo} alt={siteName} class="h-20 w-auto object-contain" />
+              ) : (
+                <div>
+                  <h1 class="text-3xl md:text-4xl font-heading text-coral-600 leading-none group-hover:text-coral-700 transition-colors">{siteName}</h1>
+                  <p class="text-xs font-handwriting text-gray-500 mt-0.5">Easy & Delicious Recipes</p>
+                </div>
+              )}
+            </a>
+          </div>
+
+          <!-- Desktop Navigation -->
+          <div class="hidden lg:flex items-center gap-8">
+            <a href="/" class="text-gray-800 hover:text-coral-600 transition-colors font-bold text-base">Home</a>
+            <a href="/category/appetizers" class="text-gray-800 hover:text-coral-600 transition-colors font-bold text-base">Appetizers</a>
+            <a href="/category/dinners" class="text-gray-800 hover:text-coral-600 transition-colors font-bold text-base">Dinners</a>
+            <a href="/category/drinks" class="text-gray-800 hover:text-coral-600 transition-colors font-bold text-base">Drinks</a>
+            <a href="/category/desserts" class="text-gray-800 hover:text-coral-600 transition-colors font-bold text-base">Desserts</a>
+          </div>
+
+          <!-- Right Side Icons -->
+          <div class="flex items-center gap-4">
+            <!-- Search Button -->
+            <button
+              type="button"
+              class="text-gray-700 hover:text-coral-600 transition-colors focus:outline-none"
+              id="search-toggle"
+              aria-label="Toggle search"
+            >
+              <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+              </svg>
+            </button>
+
+            <!-- Mobile Menu Button -->
+            <button
+              type="button"
+              class="lg:hidden text-gray-700 hover:text-coral-600 focus:outline-none"
+              id="mobile-menu-button"
+            >
+              <span class="sr-only">Open main menu</span>
+              <svg class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="hidden border-t border-coral-100 py-4 bg-gradient-to-r from-cream-50 to-white" id="search-bar">
+          <form action="/search" method="GET" class="max-w-2xl mx-auto">
+            <div class="relative">
+              <input
+                type="search"
+                name="q"
+                placeholder="Search for recipes..."
+                class="w-full px-5 py-3.5 pl-12 pr-4 text-gray-700 bg-white border-2 border-coral-300 rounded-full focus:outline-none focus:ring-2 focus:ring-coral-500 focus:border-coral-500 placeholder-gray-400 shadow-sm"
+                autocomplete="off"
+              />
+              <svg class="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-coral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+              </svg>
+            </div>
+          </form>
+        </div>
+
+        <!-- Mobile menu -->
+        <div class="hidden lg:hidden" id="mobile-menu">
+          <div class="py-3 space-y-1 bg-gradient-to-b from-cream-50 to-white border-t border-coral-100">
+            <a href="/" class="block px-4 py-3 text-gray-800 hover:text-coral-600 hover:bg-coral-50 font-bold rounded-lg mx-2 transition-colors">Home</a>
+            <a href="/category/appetizers" class="block px-4 py-3 text-gray-800 hover:text-coral-600 hover:bg-coral-50 font-bold rounded-lg mx-2 transition-colors">Appetizers</a>
+            <a href="/category/dinners" class="block px-4 py-3 text-gray-800 hover:text-coral-600 hover:bg-coral-50 font-bold rounded-lg mx-2 transition-colors">Dinners</a>
+            <a href="/category/drinks" class="block px-4 py-3 text-gray-800 hover:text-coral-600 hover:bg-coral-50 font-bold rounded-lg mx-2 transition-colors">Drinks</a>
+            <a href="/category/desserts" class="block px-4 py-3 text-gray-800 hover:text-coral-600 hover:bg-coral-50 font-bold rounded-lg mx-2 transition-colors">Desserts</a>
+            <div class="border-t border-coral-100 my-2"></div>
+            <a href="/about-us" class="block px-4 py-3 text-gray-700 hover:text-coral-600 hover:bg-coral-50 font-medium rounded-lg mx-2 transition-colors">About Us</a>
+            <a href="/contact-us" class="block px-4 py-3 text-gray-700 hover:text-coral-600 hover:bg-coral-50 font-medium rounded-lg mx-2 transition-colors">Contact Us</a>
+            <a href={pinterestUrl} target="_blank" rel="noopener noreferrer" class="block px-4 py-3 text-coral-600 hover:bg-coral-50 font-medium rounded-lg mx-2 transition-colors flex items-center gap-2">
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/>
+              </svg>
+              Follow on Pinterest
+            </a>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Top of Page Ad -->
+    {topOfPageAd && <Fragment set:html={topOfPageAd} />}
+
+    <main>
+      <slot />
+    </main>
+
+    <!-- Bottom of Page Ads -->
+    {bottomOfPageAd && <Fragment set:html={bottomOfPageAd} />}
+    {bottomOfPageAltAd && <Fragment set:html={bottomOfPageAltAd} />}
+
+    <footer class="bg-white mt-16">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-12">
+          <!-- Left Column: Logo, Links & Social -->
+          <div class="space-y-8">
+            <!-- Logo -->
+            <div>
+              {siteLogo ? (
+                <img src={siteLogo} alt={siteName} class="h-20 w-auto object-contain" />
+              ) : (
+                <h3 class="text-3xl font-heading text-coral-600">{siteName}</h3>
+              )}
+            </div>
+            
+            <!-- Recipe Search Bar -->
+            <div>
+              <form action="/search" method="GET">
+                <div class="relative">
+                  <input 
+                    type="search" 
+                    name="q" 
+                    placeholder="Search recipes..." 
+                    class="w-full px-5 py-3 pr-14 text-gray-900 bg-gray-50 border border-gray-200 rounded-full focus:bg-white focus:border-coral-600 focus:outline-none focus:shadow-md transition-all" 
+                    autocomplete="off"
+                  />
+                  <button 
+                    type="submit" 
+                    class="absolute right-2 top-1/2 transform -translate-y-1/2 w-9 h-9 rounded-full bg-coral-600 hover:bg-coral-700 flex items-center justify-center transition-all hover:scale-105" 
+                    aria-label="Search"
+                  >
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                  </button>
+                </div>
+              </form>
+            </div>
+            
+            <!-- Social Media Icons -->
+            <div class="flex gap-3">
+              <a href={pinterestUrl} target="_blank" rel="noopener noreferrer" class="w-12 h-12 rounded-full bg-[#E60023] hover:opacity-90 flex items-center justify-center transition-opacity" aria-label="Pinterest">
+                <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/>
+                </svg>
+              </a>
+            </div>
+          </div>
+
+          <!-- Center Column: Explore More -->
+          <div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-6">Explore More</h3>
+            <div class="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
+              <a href="/category/appetizers" class="text-gray-700 hover:text-coral-600 transition-colors">Appetizers</a>
+              <a href="/category/dinners" class="text-gray-700 hover:text-coral-600 transition-colors">Dinners</a>
+              <a href="/category/drinks" class="text-gray-700 hover:text-coral-600 transition-colors">Drinks</a>
+              <a href="/category/desserts" class="text-gray-700 hover:text-coral-600 transition-colors">Desserts</a>
+              <a href="/recipes" class="text-gray-700 hover:text-coral-600 transition-colors">All Recipes</a>
+            </div>
+          </div>
+
+          <!-- Right Column: Action Buttons -->
+          <div>
+            <div class="space-y-4">
+              <a href="/about-us" class="block bg-coral-600 hover:bg-coral-700 text-white font-bold py-4 px-6 text-center transition-colors uppercase text-sm tracking-wide">More About Us →</a>
+              <a href="/recipes" class="block bg-[#FF6B9D] hover:bg-[#FF5588] text-white font-bold py-4 px-6 text-center transition-colors uppercase text-sm tracking-wide">Browse Recipes →</a>
+              <a href="/contact-us" class="block bg-[#FFD166] hover:bg-[#FFC233] text-gray-900 font-bold py-4 px-6 text-center transition-colors uppercase text-sm tracking-wide">Contact Us →</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom bar -->
+      <div class="bg-gray-900 text-gray-400">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+          <div class="flex flex-col md:flex-row justify-between items-center gap-4 text-sm">
+            <div class="flex flex-wrap justify-center md:justify-start gap-4">
+              <span>©{new Date().getFullYear()}, {siteName}.</span>
+              <a href="/terms-of-use" class="hover:text-white transition-colors">Terms of Use</a>
+              <span>&</span>
+              <a href="/privacy-policy" class="hover:text-white transition-colors">Privacy Policy</a>
+              <a href="/gdpr-policy" class="hover:text-white transition-colors">GDPR</a>
+              <a href="/cookie-policy" class="hover:text-white transition-colors">Cookies</a>
+              <a href="/copyright-policy" class="hover:text-white transition-colors">Copyright</a>
+              <a href="/disclaimer" class="hover:text-white transition-colors">Disclaimer</a>
+              <a href="/contact-us" class="hover:text-white transition-colors">Contact Us</a>
+            </div>
+            <button onclick="window.scrollTo({top: 0, behavior: 'smooth'})" class="flex items-center gap-2 hover:text-white transition-colors font-medium">
+              Back To Top
+              <svg class="w-4 h-4 transition-transform group-hover:-translate-y-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Custom Footer Code Injection -->
+      {customFooterCode && <Fragment set:html={customFooterCode} />}
+    </footer>
+
+    <script>
+      // Mobile menu toggle
+      document.addEventListener('DOMContentLoaded', function() {
+        const button = document.getElementById('mobile-menu-button');
+        const menu = document.getElementById('mobile-menu');
+
+        if (button && menu) {
+          button.addEventListener('click', function() {
+            menu.classList.toggle('hidden');
+          });
+        }
+
+        // Search toggle (desktop)
+        const searchToggle = document.getElementById('search-toggle');
+        const searchBar = document.getElementById('search-bar');
+
+        if (searchToggle && searchBar) {
+          searchToggle.addEventListener('click', function() {
+            searchBar.classList.toggle('hidden');
+            if (!searchBar.classList.contains('hidden')) {
+              const searchInput = searchBar.querySelector('input[type="search"]');
+              if (searchInput) {
+                setTimeout(() => searchInput.focus(), 100);
+              }
+            }
+          });
+        }
+
+        // Search toggle (mobile)
+        const mobileSearchToggle = document.getElementById('mobile-search-toggle');
+
+        if (mobileSearchToggle && searchBar) {
+          mobileSearchToggle.addEventListener('click', function() {
+            searchBar.classList.toggle('hidden');
+            // Close mobile menu if open
+            if (menu && !searchBar.classList.contains('hidden')) {
+              menu.classList.add('hidden');
+            }
+            if (!searchBar.classList.contains('hidden')) {
+              const searchInput = searchBar.querySelector('input[type="search"]');
+              if (searchInput) {
+                setTimeout(() => searchInput.focus(), 100);
+              }
+            }
+          });
+        }
+      });
+    </script>
+
+    <!-- Custom Body Bottom Code Injection -->
+    {customBodyBottomCode && <Fragment set:html={customBodyBottomCode} />}
+
+    <!-- HBAgency Floor Ad -->
+    {hbAgencyFloorAd && <Fragment set:html={hbAgencyFloorAd} />}
+
+    <!-- HBAgency Interstitial -->
+    {hbAgencyInterstitial && <Fragment set:html={hbAgencyInterstitial} />}
+
+    <!-- Ezoic Lazy Loading Script -->
+    {adProvider === 'ezoic' && (
+      <script>
+        // Ezoic lazy loading for below-fold ads
+        document.addEventListener('DOMContentLoaded', function() {
+          const lazyAds = document.querySelectorAll('[data-ezoic-lazy]');
+          if (lazyAds.length === 0) return;
+
+          const observer = new IntersectionObserver(function(entries) {
+            entries.forEach(function(entry) {
+              if (entry.isIntersecting) {
+                const ad = entry.target;
+                const placeholderId = ad.dataset.ezoicPlaceholder;
+                if (placeholderId && typeof ezstandalone !== 'undefined') {
+                  ezstandalone.cmd.push(function() {
+                    ezstandalone.showAds(parseInt(placeholderId));
+                  });
+                }
+                observer.unobserve(ad);
+              }
+            });
+          }, { rootMargin: '200px' });
+
+          lazyAds.forEach(function(ad) {
+            observer.observe(ad);
+          });
+        });
+      </script>
+    )}
+  </body>
+</html>

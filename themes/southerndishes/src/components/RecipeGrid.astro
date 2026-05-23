@@ -1,0 +1,59 @@
+---
+import type { Recipe } from '../types/recipe';
+import RecipeCard from './RecipeCard.astro';
+
+export interface Props {
+  recipes: Recipe[];
+  title?: string;
+  showCategory?: boolean;
+  className?: string;
+  limit?: number;
+}
+
+const {
+  recipes,
+  title,
+  showCategory = false,
+  className = '',
+  limit
+} = Astro.props;
+
+const displayRecipes = limit ? recipes.slice(0, limit) : recipes;
+---
+
+{title && (
+  <div class="text-center mb-12">
+    <h2 class="font-heading text-4xl md:text-5xl text-gray-900">
+      {title}
+    </h2>
+  </div>
+)}
+
+<div class={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 ${className}`}>
+  {displayRecipes.map((recipe) => (
+    <RecipeCard
+      recipe={recipe}
+      showCategory={showCategory}
+    />
+  ))}
+</div>
+
+{displayRecipes.length === 0 && (
+  <div class="text-center py-16 bg-cream-50 rounded-3xl">
+    <div class="w-20 h-20 mx-auto mb-6 bg-coral-100 rounded-full flex items-center justify-center">
+      <svg class="w-10 h-10 text-coral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+      </svg>
+    </div>
+    <h3 class="font-heading text-2xl text-gray-900 mb-3">No Recipes Found</h3>
+    <p class="text-gray-600 text-lg mb-6 max-w-md mx-auto">
+      We couldn't find any recipes matching your criteria. Try browsing other categories!
+    </p>
+    <a
+      href="/recipes"
+      class="inline-flex items-center px-6 py-3 bg-coral-500 hover:bg-coral-600 text-white font-bold rounded-full transition-all"
+    >
+      Browse All Recipes
+    </a>
+  </div>
+)}

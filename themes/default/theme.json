@@ -1,0 +1,14 @@
+{
+  "slug": "default",
+  "display_name": "Default Recipes",
+  "description": "Minimal static recipe site. Renders index + per-article pages from Recipes.xlsx and the pinterest image as the article featured image.",
+  "version": "1.0.0",
+  "author": "PINTEREST tooling",
+  "cf_project_name": "",
+  "data_source": {
+    "excel": "Recipes.xlsx",
+    "required_columns": ["Title", "article", "image_1"],
+    "optional_columns": ["pinterest_title", "pinterest_description", "pinterest_image", "categories", "Recipe"]
+  },
+  "outputs": ["index.html", "article/<slug>/index.html", "static/*"]
+}

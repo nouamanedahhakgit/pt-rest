@@ -1,0 +1,20 @@
+name = "recipe-website"
+compatibility_date = "2023-05-18"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "southerndishes"
+database_id = "6f15d902-6add-4535-a0d9-62e54386dc35"
+
+[env.production]
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "southerndishes"
+database_id = "6f15d902-6add-4535-a0d9-62e54386dc35"
+
+[env.preview]
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "southerndishes"
+database_id = "6f15d902-6add-4535-a0d9-62e54386dc35"

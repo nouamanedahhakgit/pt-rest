@@ -1,0 +1,66 @@
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div class="footer-col">
+      <h3>{{ site.title }}</h3>
+      <form class="footer-search" action="#" method="GET" onsubmit="return false;" style="margin-top:24px">
+        <input type="search" name="q" placeholder="Search recipes…" autocomplete="off"/>
+        <button type="submit" aria-label="Search">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:16px;height:16px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </button>
+      </form>
+      <div class="social-row">
+        <a href="#" aria-label="Pinterest">
+          <svg fill="currentColor" viewBox="0 0 24 24" style="width:24px;height:24px"><path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/></svg>
+        </a>
+      </div>
+    </div>
+    <div class="footer-col">
+      <div class="col-title">Explore More</div>
+      <div class="footer-links">
+        {% for c in categories %}<a href="/category/{{ c|slug }}/">{{ c }}</a>{% endfor %}
+        <a href="/recipes/">All Recipes</a>
+        <a href="/author/{{ default_author.slug }}/">Meet the Author</a>
+      </div>
+    </div>
+    <div class="footer-col">
+      <div class="footer-buttons">
+        <a class="b1" href="/author/{{ default_author.slug }}/">Meet {{ default_author.name }} →</a>
+        <a class="b2" href="/recipes/">Browse Recipes →</a>
+        <a class="b3" href="/page/contact-us/">Contact Us →</a>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <div class="wrap row">
+      <div class="legal">
+        <span>&copy; {{ site.year }}, {{ site.title }}.</span>
+        <a href="/page/terms-of-use/">Terms of Use</a>
+        <span>&amp;</span>
+        <a href="/page/privacy-policy/">Privacy Policy</a>
+        <a href="/page/cookie-policy/">Cookies</a>
+        <a href="/page/contact-us/">Contact Us</a>
+      </div>
+      <button class="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})">
+        Back To Top
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+      </button>
+    </div>
+  </div>
+</footer>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    var btn = document.getElementById('mobileMenuBtn');
+    var menu = document.getElementById('mobileMenu');
+    if (btn && menu) btn.addEventListener('click', function() { menu.classList.toggle('open'); });
+    var st = document.getElementById('searchToggle');
+    var sb = document.getElementById('searchBar');
+    if (st && sb) st.addEventListener('click', function() {
+      sb.classList.toggle('open');
+      if (sb.classList.contains('open')) {
+        var i = sb.querySelector('input[type="search"]');
+        if (i) setTimeout(function(){ i.focus(); }, 100);
+      }
+    });
+  });
+</script>

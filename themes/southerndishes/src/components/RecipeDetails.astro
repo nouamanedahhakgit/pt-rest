@@ -1,0 +1,263 @@
+---
+import type { RecipeData, AmazonProduct } from '../types/recipe';
+import { formatTime, formatIngredient, getPinterestImageUrl, decodeHtmlEntities } from '../lib/utils';
+import AmazonProductGrid from './AmazonProductGrid.astro';
+import { type AdProvider, type AdSettings, getAdPlaceholder } from '../lib/ads';
+
+export interface Props {
+  recipeData: RecipeData;
+  slug?: string;
+  recipeTitle?: string;
+  featuredImage?: string;
+  pinImage?: string;
+  pinDescription?: string;
+  className?: string;
+  products?: AmazonProduct[];
+  adProvider?: AdProvider;
+  adSettings?: AdSettings;
+}
+
+const { recipeData, slug, recipeTitle, featuredImage, pinImage, pinDescription, className = '', products = [], adProvider = 'ezoic', adSettings = {} } = Astro.props;
+
+// Get recipe card ad placeholder
+const recipeCardAd = getAdPlaceholder('recipe_card', adProvider, true, adSettings);
+const currentUrl = Astro.url?.toString() || '';
+// Clean Pinterest image URL (remove query parameters that cause Pinterest issues)
+const pinterestImage = getPinterestImageUrl(pinImage || featuredImage || '');
+const pinterestDescription = pinDescription || recipeTitle || '';
+---
+
+<div class={`bg-white rounded-xl shadow-lg border-2 border-coral-200 overflow-hidden ${className}`}>
+  <!-- Header Section with Image, Title, and Info -->
+  <div class="bg-gradient-to-br from-coral-50 to-cream-50 p-5 md:p-6 border-b-2 border-coral-100">
+    <div class="flex items-start gap-4 mb-4">
+      <!-- Small Circular Image -->
+      {featuredImage && (
+        <div class="flex-shrink-0">
+          <img
+            src={featuredImage}
+            alt={recipeData.name}
+            class="w-20 h-20 md:w-24 md:h-24 object-cover rounded-full border-3 border-white shadow-lg ring-2 ring-coral-300"
+            loading="lazy"
+          />
+        </div>
+      )}
+      
+      <!-- Title and Summary -->
+      <div class="flex-1 min-w-0">
+        <h2 class="font-heading text-xl md:text-2xl text-gray-900 mb-2 leading-tight">
+          {decodeHtmlEntities(recipeData.name)}
+        </h2>
+        {recipeData.summary && (
+          <p class="text-gray-600 text-xs md:text-sm leading-relaxed line-clamp-2">
+            {decodeHtmlEntities(recipeData.summary)}
+          </p>
+        )}
+      </div>
+    </div>
+
+    <!-- Compact Info Row -->
+    <div class="flex flex-wrap items-center gap-3 text-xs mb-4">
+      {recipeData.prep_time && (
+        <div class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-full shadow-sm">
+          <svg class="w-3.5 h-3.5 text-coral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <span class="font-bold text-coral-600">{formatTime(recipeData.prep_time)}</span>
+          <span class="text-gray-500">prep</span>
+        </div>
+      )}
+
+      {recipeData.cook_time && (
+        <div class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-full shadow-sm">
+          <svg class="w-3.5 h-3.5 text-coral-500" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2c1.5 0 2.5 1.5 2.5 3s-1 3-2.5 3-2.5-1.5-2.5-3 1-3 2.5-3zm-3 4c0-1.5-.8-2.5-2-2.5S5 4.5 5 6s.8 2.5 2 2.5S9 7.5 9 6zm8 0c0-1.5-.8-2.5-2-2.5s-2 1-2 2.5.8 2.5 2 2.5 2-1 2-2.5zM3 13c0-3.9 3.1-7 7-7h4c3.9 0 7 3.1 7 7v7c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-7z"/>
+          </svg>
+          <span class="font-bold text-coral-600">{formatTime(recipeData.cook_time)}</span>
+          <span class="text-gray-500">cook</span>
+        </div>
+      )}
+
+      {recipeData.servings && (
+        <div class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-full shadow-sm">
+          <svg class="w-3.5 h-3.5 text-coral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+          </svg>
+          <span class="font-bold text-coral-600">{recipeData.servings}</span>
+          <span class="text-gray-500">servings</span>
+        </div>
+      )}
+
+      {recipeData.calories && (
+        <div class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-full shadow-sm">
+          <svg class="w-3.5 h-3.5 text-coral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+          </svg>
+          <span class="font-bold text-coral-600">{recipeData.calories}</span>
+          <span class="text-gray-500">cal</span>
+        </div>
+      )}
+    </div>
+
+    <!-- Highlighted Action Buttons -->
+    <div class="flex flex-wrap gap-2">
+      {slug && (
+        <a
+          href={`/print/${slug}/`}
+          target="_blank"
+          class="flex-1 min-w-[140px] inline-flex items-center justify-center px-5 py-3 bg-gray-900 hover:bg-black text-white rounded-lg transition-all font-bold shadow-lg hover:shadow-xl text-sm hover:-translate-y-1 hover:scale-105"
+        >
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path>
+          </svg>
+          Print Recipe
+        </a>
+      )}
+      {pinterestImage && pinterestDescription && currentUrl && (
+        <a
+          href={`https://pinterest.com/pin/create/button/?url=${encodeURIComponent(currentUrl)}&media=${encodeURIComponent(pinterestImage)}&description=${encodeURIComponent(pinterestDescription)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="flex-1 min-w-[140px] inline-flex items-center justify-center px-5 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all font-bold shadow-lg hover:shadow-xl text-sm hover:-translate-y-1 hover:scale-105"
+        >
+          <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.174-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.402.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.758-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.624 0 11.99-5.367 11.99-11.988C24.007 5.367 18.641.001 12.017.001z"/>
+          </svg>
+          Pin Recipe
+        </a>
+      )}
+    </div>
+  </div>
+
+  <!-- Content Section -->
+  <div class="p-5 md:p-6">
+    <!-- Recipe Card Ad -->
+    {recipeCardAd && <Fragment set:html={recipeCardAd} />}
+  </div>
+
+  <div class="grid lg:grid-cols-2 gap-6">
+    <!-- Ingredients -->
+    <div class="bg-white rounded-lg p-5 md:p-6">
+      <h3 class="font-heading text-xl md:text-2xl text-gray-900 mb-4 flex items-center">
+        <svg class="w-5 h-5 text-coral-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+        </svg>
+        Ingredients
+      </h3>
+      <div class="space-y-2">
+        {recipeData.ingredients.map((ingredient, index) => (
+          <label class="flex items-start space-x-2 cursor-pointer group hover:bg-coral-50 rounded p-1.5 -ml-1.5 transition-colors">
+            <input
+              type="checkbox"
+              class="mt-1 w-4 h-4 text-coral-500 border-gray-300 rounded focus:ring-coral-400 focus:ring-2"
+            />
+            <span class="text-gray-700 group-hover:text-gray-900 transition-colors leading-relaxed text-sm">
+              {formatIngredient(ingredient)}
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="bg-white rounded-lg p-5 md:p-6">
+      <h3 class="font-heading text-xl md:text-2xl text-gray-900 mb-4 flex items-center">
+        <svg class="w-5 h-5 text-coral-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2v0a2 2 0 01-2-2v-5H8z"></path>
+        </svg>
+        Instructions
+      </h3>
+      <ol class="space-y-3">
+        {recipeData.instructions.map((instruction, index) => (
+          <li class="flex items-start space-x-3">
+            <div class="flex-shrink-0 w-7 h-7 bg-coral-500 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-sm">
+              {index + 1}
+            </div>
+            <p class="text-gray-700 leading-relaxed pt-0.5 text-sm">
+              {instruction}
+            </p>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </div>
+
+  <!-- Recipe Notes -->
+  {recipeData.notes && (
+    <div class="mt-2.5 mx-2.5 p-6 bg-coral-50 rounded-lg border border-coral-200">
+      <h4 class="font-bold text-base text-gray-900 mb-2 flex items-center">
+        <svg class="w-5 h-5 text-coral-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        Chef's Notes
+      </h4>
+      <p class="text-gray-700 leading-relaxed text-sm">
+        {recipeData.notes}
+      </p>
+    </div>
+  )}
+
+    <!-- Recipe Meta Info -->
+    {(recipeData.course || recipeData.cuisine) && (
+      <div class="mt-5 pt-4 border-t border-coral-100">
+        <div class="flex flex-wrap items-center justify-center gap-2 text-xs text-gray-600">
+          {recipeData.course && (
+            <span class="bg-cream-100 px-3 py-1.5 rounded-full">
+              <strong class="text-gray-900">Course:</strong> {recipeData.course}
+            </span>
+          )}
+          {recipeData.cuisine && (
+            <span class="bg-cream-100 px-3 py-1.5 rounded-full">
+              <strong class="text-gray-900">Cuisine:</strong> {recipeData.cuisine}
+            </span>
+          )}
+        </div>
+      </div>
+    )}
+  </div>
+
+    {products && products.length > 0 && (
+      <AmazonProductGrid products={products.slice(0, 2)} columns={2} />
+    )}
+</div>
+
+<style>
+  /* Responsive button styles */
+  @media (max-width: 640px) {
+    .flex.items-center.justify-center.gap-4 {
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .flex.items-center.justify-center.gap-4 a {
+      width: 100%;
+      min-width: auto !important;
+      padding: 0.875rem 1.5rem !important;
+      font-size: 0.9375rem !important;
+    }
+
+    .flex.items-center.justify-center.gap-4 a svg {
+      width: 1.25rem !important;
+      height: 1.25rem !important;
+      margin-right: 0.5rem !important;
+    }
+  }
+
+  @media print {
+    .print\\:hidden {
+      display: none !important;
+    }
+
+    .recipe-card {
+      box-shadow: none !important;
+      border: 1px solid #e5e7eb !important;
+      page-break-inside: avoid;
+    }
+
+    .recipe-meta {
+      background: #f9fafb !important;
+      -webkit-print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+  }
+</style>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ author.name }} — Recipe Author · {{ site.title }}</title>
+  <meta name="description" content="{{ author.bio or 'View all recipes by ' + author.name }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Karla:wght@300;400;500;600;700;800&family=Caveat:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+{% include "_header.html" %}
+
+<section class="author-hero">
+  <div class="author-hero-inner">
+    <div class="author-hero-content">
+      {% if author.image_url %}
+      <div class="author-img-wrap">
+        <div class="author-img-decoration"></div>
+        <img class="author-img" src="{{ author.image_url }}" alt="{{ author.name }}" />
+      </div>
+      {% endif %}
+      <div>
+        <p class="author-label">Recipe Creator</p>
+        <h1 class="author-name">{{ author.name }}</h1>
+        {% if author.title %}<p class="author-title">{{ author.title }}</p>{% endif %}
+        {% if author.bio %}<p class="author-bio">{{ author.bio }}</p>{% endif %}
+        <div class="author-stats">
+          <div class="author-stat">
+            <div class="stat-value">{{ recipes|length }}</div>
+            <div class="stat-text">{% if recipes|length == 1 %}Recipe{% else %}Recipes{% endif %}</div>
+          </div>
+          <div class="author-stat">
+            <div class="stat-value">★★★★★</div>
+            <div class="stat-text">Top Rated</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="recipes-section">
+  <div class="wrap-narrow">
+    <div class="header">
+      <p class="hand">Delicious creations</p>
+      <h2>Recipes by {{ author.name }}</h2>
+    </div>
+    {% if recipes %}
+      <div class="recipes-grid">
+        {% for a in recipes %}{% include "_card.html" %}{% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        </div>
+        <h2 class="empty-title">No Recipes Yet</h2>
+        <p class="empty-text">{{ author.name }} hasn't published any recipes yet. Check back soon!</p>
+        <a href="/recipes/" class="btn btn-primary">Browse All Recipes →</a>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+{% include "_footer.html" %}
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>All Recipes — {{ site.title }}</title>
+  <meta name="description" content="Browse every recipe on {{ site.title }} — quick weeknight dinners, desserts, drinks and more." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Karla:wght@300;400;500;600;700;800&family=Caveat:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+{% set active_page = "recipes" %}
+{% include "_header.html" %}
+
+<section class="cat-hero">
+  <div class="wrap">
+    <p class="greeting">Browse every recipe</p>
+    <h1>All Recipes</h1>
+    <p class="description">{{ articles|length }} delicious recipes — from quick weeknight dinners to celebration-worthy desserts.</p>
+    <div class="count">{{ articles|length }} {% if articles|length == 1 %}Recipe{% else %}Recipes{% endif %}</div>
+  </div>
+</section>
+
+{% if categories %}
+<section class="cat-filter">
+  <div class="cat-filter-row">
+    <a class="filter-btn active" href="/recipes/">All Recipes</a>
+    {% for c in categories %}<a class="filter-btn" href="/category/{{ c|slug }}/">{{ c }}</a>{% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="recipes-section">
+  <div class="wrap-narrow">
+    <div class="recipes-grid">
+      {% for a in articles %}{% include "_card.html" %}{% endfor %}
+    </div>
+  </div>
+</section>
+
+{% include "_footer.html" %}
+</body>
+</html>

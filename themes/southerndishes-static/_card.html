@@ -1,0 +1,23 @@
+{# Recipe card partial — call with {% with a=article %}{% include "_card.html" %}{% endwith %} or render(card=a) #}
+<article class="recipe-card">
+  <a href="{{ a.url }}">
+    <div class="img-wrap">
+      {% if a.featured_image %}<img src="{{ a.featured_image }}" alt="{{ a.title }}" loading="lazy"/>{% endif %}
+      {% if a.category %}<span class="cat-badge">{{ a.category }}</span>{% endif %}
+    </div>
+    <div class="recipe-card-body">
+      <h3>{{ a.title }}</h3>
+      {% if a.excerpt %}<p>{{ a.excerpt }}</p>{% endif %}
+      <div class="meta">
+        <div class="meta-item">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <span>{% if a.total_time %}{{ a.total_time }}{% else %}Quick{% endif %}</span>
+        </div>
+        <div class="meta-item">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span>{% if a.servings %}{{ a.servings }}{% else %}4 servings{% endif %}</span>
+        </div>
+      </div>
+    </div>
+  </a>
+</article>

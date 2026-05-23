@@ -1,0 +1,104 @@
+---
+import Layout from '../layouts/Layout.astro';
+import RecipeGrid from '../components/RecipeGrid.astro';
+import Pagination from '../components/Pagination.astro';
+import { DatabaseService } from '../lib/database';
+import { EzoicPlacements } from '../lib/ezoic';
+
+const db = new DatabaseService(Astro.locals.runtime?.env?.DB || {} as any);
+
+// Pagination settings
+const RECIPES_PER_PAGE = 12;
+const currentPage = parseInt(Astro.url.searchParams.get('page') || '1', 10);
+const offset = (currentPage - 1) * RECIPES_PER_PAGE;
+
+let recipes = [];
+let categories = [];
+let totalRecipes = 0;
+
+try {
+  if (Astro.locals.runtime?.env?.DB) {
+    [recipes, categories, totalRecipes] = await Promise.all([
+      db.getRecipes(RECIPES_PER_PAGE, offset),
+      db.getCategories(),
+      db.getRecipeCount()
+    ]);
+  }
+} catch (error) {
+  console.error('Error fetching recipes:', error);
+}
+
+const totalPages = Math.ceil(totalRecipes / RECIPES_PER_PAGE);
+---
+
+<Layout
+  title="All Recipes - Recipe Website"
+  description="Browse our complete collection of delicious recipes. Find the perfect recipe for any occasion, from quick weeknight dinners to special celebration meals."
+>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <!-- Page Header -->
+    <div class="text-center mb-12">
+      <h1 class="font-heading text-4xl md:text-5xl text-gray-900 mb-3">
+        All Recipes
+      </h1>
+      <p class="font-handwriting text-2xl text-coral-600 mb-4">
+        Let's cook something delicious!
+      </p>
+
+  <!-- Ezoic Ad: Under Page Title (102) -->
+  <div id="ezoic-pub-ad-placeholder-102"></div>      <p class="text-lg text-gray-600 max-w-2xl mx-auto">
+        Discover our complete collection of tested and perfected recipes
+      </p>
+
+  <!-- Ezoic Ad: Under Page Title (102) -->
+  <div id="ezoic-pub-ad-placeholder-102"></div>    </div>
+
+    <!-- Categories Filter -->
+    {categories.length > 0 && (
+      <div class="mb-10">
+        <div class="flex flex-wrap justify-center gap-3">
+          <a
+            href="/recipes"
+            class="px-5 py-2.5 bg-coral-500 text-white rounded-full text-sm font-bold hover:bg-coral-600 transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5"
+          >
+            All Recipes
+          </a>
+          {categories.map((category) => (
+            <a
+              href={`/category/${category.slug}/`}
+              class="px-5 py-2.5 bg-cream-100 text-gray-700 rounded-full text-sm font-semibold hover:bg-coral-100 hover:text-coral-700 transition-all border border-cream-300 hover:border-coral-300"
+            >
+              {category.name}
+            </a>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <!-- Recipes Grid -->
+    <RecipeGrid recipes={recipes} showCategory={true} />
+
+    <!-- Pagination -->
+    <Pagination
+      currentPage={currentPage}
+      totalPages={totalPages}
+      baseUrl="/recipes/"
+    />
+
+    {recipes.length === 0 && (
+      <div class="text-center py-16">
+        <div class="w-20 h-20 mx-auto mb-6 bg-coral-50 rounded-full flex items-center justify-center border-2 border-coral-200">
+          <svg class="w-10 h-10 text-coral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+          </svg>
+        </div>
+        <h2 class="font-heading text-3xl text-gray-900 mb-3">No Recipes Available</h2>
+        <p class="text-gray-600 text-lg">
+          Recipes will appear here once the database is set up and populated.
+        </p>
+
+  <!-- Ezoic Ad: Under Page Title (102) -->
+  <div id="ezoic-pub-ad-placeholder-102"></div>      </div>
+    )}
+  </div>
+</Layout>
