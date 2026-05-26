@@ -6,6 +6,7 @@
       "display_name": "A1-Pinterest_01",
       "out_dir": "A1-Pinterest_01-out",
       "templates_dir": "templates",
+<<<<<<< HEAD
       "openai_api_key": "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",
       "wordpress_url": "https://easydessertsdaily.com",
       "wordpress_user": "admin",
@@ -20,13 +21,31 @@
       },
       "wordpress_app_password": "tLLr H9A1 OphK KH8S qdfN T6N2",
       "theme_slug": "southerndishes-static"
+=======
+      "wordpress_url": "https://easydessertsdaily.com",
+      "wordpress_user": "admin",
+      "settings": {
+        "category_id_mapping": {
+          "Cookie & Brownie Recipes": 3,
+          "Easy Cake Recipes": 5,
+          "No Bake Desserts": 2,
+          "Quick Dessert Ideas": 4
+        }
+      },
+      "wordpress_app_password": "tLLr H9A1 OphK KH8S qdfN T6N2",
+      "theme_slug": "southerndishes-static",
+      "cloudflare_project_name": "a1"
+>>>>>>> d925ad92920c5c9cbd7e2fdaadf647dbc1a2c9b3
     },
     {
       "id": "P02",
       "display_name": "A2-Pinterest_02",
       "out_dir": "A2-Pinterest_02-out",
       "templates_dir": "templates",
+<<<<<<< HEAD
       "openai_api_key": "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",
+=======
+>>>>>>> d925ad92920c5c9cbd7e2fdaadf647dbc1a2c9b3
       "wordpress_url": "https://lowcarbdaily.com",
       "wordpress_user": "admin",
       "settings": {

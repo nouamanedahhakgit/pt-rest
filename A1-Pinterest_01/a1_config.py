@@ -82,6 +82,9 @@ def load_settings() -> Dict[str, Any]:
     st = (site or {}).get("settings") if isinstance(site, dict) else None
     if isinstance(st, dict) and st:
         data = _deep_merge(data, st)
+    norm = normalize_category_id_mapping(data.get("category_id_mapping"))
+    if norm:
+        data["category_id_mapping"] = norm
     return data
 
 
@@ -253,6 +256,39 @@ def to_excel_with_retry(
     raise last
 
 
+def normalize_category_id_mapping(value: Any) -> Optional[Dict[str, int]]:
+    """
+    WordPress category name -> term ID.
+
+    manage_sites sometimes stores category_id_mapping as a JSON string inside settings;
+    accept both dict and string so site rows are not ignored (fallback would be shared
+    settings: drinks/dessert/appetizers/dinner).
+    """
+    if isinstance(value, dict):
+        if not value:
+            return None
+        out: Dict[str, int] = {}
+        for k, v in value.items():
+            key = str(k).strip()
+            if not key:
+                continue
+            try:
+                out[key] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out or None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return normalize_category_id_mapping(parsed)
+    return None
+
+
 def get_category_id_mapping(settings: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
     """
     WordPress category display name -> term ID for the active site.
@@ -265,14 +301,14 @@ def get_category_id_mapping(settings: Optional[Dict[str, Any]] = None) -> Dict[s
     if isinstance(site, dict):
         st = site.get("settings")
         if isinstance(st, dict):
-            cm = st.get("category_id_mapping")
-            if isinstance(cm, dict) and cm:
-                return {str(k): int(v) for k, v in cm.items()}
+            cm = normalize_category_id_mapping(st.get("category_id_mapping"))
+            if cm:
+                return cm
 
     s = settings if settings is not None else load_settings()
-    cm = s.get("category_id_mapping")
-    if isinstance(cm, dict) and cm:
-        return {str(k): int(v) for k, v in cm.items()}
+    cm = normalize_category_id_mapping(s.get("category_id_mapping"))
+    if cm:
+        return cm
 
     return {
         "drinks": 1,

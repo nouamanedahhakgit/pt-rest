@@ -1,0 +1,2 @@
+# Core deps are installed manually in this project; playwright is required for A.6b PIN IMAGE HTML.
+playwright
