@@ -3662,8 +3662,64 @@ _STEP_ACTION_TOOLTIPS: Dict[str, Dict[str, str]] = {
         "clear": "Clears this project's log panel only — does not change Recipes.xlsx or Pin_01.xlsx.",
     },
     "DELETE ALL": {
-        "run": "Archives Recipes.xlsx, Pin_01.xlsx, output_images/ to ALL/archive/<date>/ then clears pipeline data.",
-        "clear": "Archives Recipes.xlsx, Pin_01.xlsx, output_images/ to ALL/archive/<date>/ then clears pipeline data.",
+        "run": (
+            "Full pipeline reset for every project.\n\n"
+            "Does:\n"
+            "• Archives Recipes.xlsx, Pin_01.xlsx, and output_images/ to ALL/archive/<date-time>/\n"
+            "• Clears pipeline columns in Recipes.xlsx (Title, Recipe, Generated At stay)\n"
+            "• Empties output_images/ and removes Pin_01.xlsx\n\n"
+            "Does NOT delete R2 cloud images or WordPress posts.\n"
+            "Use when starting a fresh batch."
+        ),
+        "clear": (
+            "Full pipeline reset for every project.\n"
+            "Archives then clears Recipes pipeline data, output_images/, and Pin_01.xlsx."
+        ),
+    },
+    "CLEANUP LOCAL": {
+        "run": (
+            "Frees local disk space — safe after PIN BULK (and CF UPLOAD if used).\n\n"
+            "Removes for ALL projects:\n"
+            "• Pin JPG files in ALL/<project>/output_images/ "
+            "(copied first to ALL/archive/<date>/)\n"
+            "• Old Cloudflare build folders in ALL/_cf_builds/ (keeps the latest build per site)\n\n"
+            "Keeps:\n"
+            "• Recipes.xlsx and Pin_01.xlsx\n"
+            "• All R2 cloud images\n"
+            "• WordPress posts and your live site\n\n"
+            "Hover preview before click shows file counts."
+        ),
+        "clear": (
+            "Archives and clears local pin JPGs (output_images/) and prunes old CF build folders."
+        ),
+    },
+    "CLEANUP LOCAL PROJECT": {
+        "run": (
+            "Frees local disk for THIS project only — same rules as Cleanup local.\n\n"
+            "Removes:\n"
+            "• This project's output_images/ pin JPGs (archived first to ALL/archive/<date>/)\n"
+            "• Old CF builds for this site (keeps the latest)\n\n"
+            "Keeps:\n"
+            "• Recipes.xlsx, Pin_01.xlsx, R2 images, WordPress\n\n"
+            "Run after PIN BULK for this project."
+        ),
+        "clear": "Local cleanup for this project only.",
+    },
+    "CLEANUP R2": {
+        "run": (
+            "Deletes unused images from Cloudflare R2 — permanent.\n\n"
+            "Removes:\n"
+            "• Extra Midjourney splits/grids (image_2–4, unused grids)\n"
+            "• Old pinterest_local / pinterest_remote copies not referenced in Excel\n\n"
+            "Keeps:\n"
+            "• Every URL still in Recipes.xlsx or Pin_01.xlsx "
+            "(image_1, image_ing_1, Picture Url 1, etc.)\n\n"
+            "You must type DELETE R2 to confirm.\n"
+            "Best after: pins uploaded to Pinterest and site looks correct."
+        ),
+        "clear": (
+            "Deletes unreferenced R2 objects. URLs in Recipes.xlsx / Pin_01.xlsx are kept."
+        ),
     },
 }
 
@@ -4467,6 +4523,600 @@ def delete_all_folder():
     lines.append("</ul>")
     lines.append("<a href='/'>Back</a>")
     return "".join(lines)
+
+
+# -------------------- Cleanup (local + R2) --------------------
+
+_CF_BUILDS_ROOT = os.path.join(_APP_ROOT, "ALL", "_cf_builds")
+_R2_CLEANUP_PREFIXES = (
+    "midjourney_grids/",
+    "midjourney_splits/",
+    "pinterest_local/",
+    "pinterest_remote/",
+    "pinterest_images/",
+)
+_IMAGE_URL_HEADERS = {
+    "main_image",
+    "image_1",
+    "image_2",
+    "image_3",
+    "image_4",
+    "main_image_ingredients",
+    "image_ing_1",
+    "image_ing_2",
+    "image_ing_3",
+    "image_ing_4",
+    "pinterest_image",
+    "picture url 1",
+}
+
+
+def _format_bytes(n: int) -> str:
+    size = float(max(0, int(n)))
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{int(n)} B"
+
+
+def _dir_size_and_count(path: str) -> tuple:
+    if not os.path.isdir(path):
+        return 0, 0
+    total = 0
+    count = 0
+    for _root, _dirs, files in os.walk(path):
+        for nm in files:
+            fp = os.path.join(_root, nm)
+            try:
+                total += os.path.getsize(fp)
+                count += 1
+            except OSError:
+                pass
+    return count, total
+
+
+def _archive_output_images_only(out_dir: str, archive_session: str) -> Dict[str, str]:
+    project_dir = _project_output_dir(out_dir)
+    arch_dir = os.path.join(archive_session, out_dir)
+    os.makedirs(arch_dir, exist_ok=True)
+    out: Dict[str, str] = {}
+    imgs_src = os.path.join(project_dir, "output_images")
+    imgs_dst = os.path.join(arch_dir, "output_images")
+    if os.path.isdir(imgs_src):
+        if os.path.exists(imgs_dst):
+            shutil.rmtree(imgs_dst)
+        shutil.copytree(imgs_src, imgs_dst)
+        n, sz = _dir_size_and_count(imgs_dst)
+        out["output_images"] = f"archived ({n} files, {_format_bytes(sz)})"
+    else:
+        out["output_images"] = "missing"
+    return out
+
+
+def _clear_output_images_dir(out_dir: str) -> Dict[str, str]:
+    project_dir = _project_output_dir(out_dir)
+    imgs = os.path.join(project_dir, "output_images")
+    try:
+        if os.path.isdir(imgs):
+            shutil.rmtree(imgs)
+        os.makedirs(imgs, exist_ok=True)
+        return {"output_images": "cleared"}
+    except Exception as e:
+        return {"output_images": f"error: {e}"}
+
+
+def _cleanup_cf_builds(*, keep_latest_per_site: int = 1, site_id_filter: Optional[str] = None) -> Dict[str, Any]:
+    """Remove old Cloudflare static build folders; keep the newest N per site."""
+    keep = max(0, int(keep_latest_per_site))
+    removed_dirs = 0
+    freed_bytes = 0
+    kept_dirs = 0
+    if not os.path.isdir(_CF_BUILDS_ROOT):
+        return {
+            "removed_dirs": 0,
+            "kept_dirs": 0,
+            "freed_bytes": 0,
+            "freed_human": _format_bytes(0),
+        }
+    for site_nm in os.listdir(_CF_BUILDS_ROOT):
+        if site_id_filter and site_nm != site_id_filter:
+            continue
+        site_path = os.path.join(_CF_BUILDS_ROOT, site_nm)
+        if not os.path.isdir(site_path):
+            continue
+        builds = []
+        for build_nm in os.listdir(site_path):
+            build_path = os.path.join(site_path, build_nm)
+            if not os.path.isdir(build_path):
+                continue
+            try:
+                mtime = os.path.getmtime(build_path)
+            except OSError:
+                mtime = 0
+            builds.append((mtime, build_path))
+        builds.sort(key=lambda x: x[0], reverse=True)
+        for i, (_mtime, build_path) in enumerate(builds):
+            if i < keep:
+                kept_dirs += 1
+                continue
+            n, sz = _dir_size_and_count(build_path)
+            try:
+                shutil.rmtree(build_path)
+                removed_dirs += 1
+                freed_bytes += sz
+            except OSError:
+                pass
+    return {
+        "removed_dirs": removed_dirs,
+        "kept_dirs": kept_dirs,
+        "freed_bytes": freed_bytes,
+        "freed_human": _format_bytes(freed_bytes),
+    }
+
+
+def _collect_http_urls_from_workbook(path: str) -> set:
+    urls: set = set()
+    if not os.path.isfile(path):
+        return urls
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        sh = wb.active
+        max_col = int(sh.max_column or 1)
+        max_row = int(sh.max_row or 1)
+        header_values = next(
+            sh.iter_rows(min_row=1, max_row=1, min_col=1, max_col=max_col, values_only=True),
+            tuple(),
+        )
+        cols: List[int] = []
+        for c in range(1, max_col + 1):
+            hv = header_values[c - 1] if c - 1 < len(header_values) else None
+            h = str(hv).strip().lower() if hv is not None else ""
+            if h in _IMAGE_URL_HEADERS:
+                cols.append(c)
+        if max_row >= 2:
+            for r in range(2, max_row + 1):
+                for c in cols:
+                    v = sh.cell(row=r, column=c).value
+                    if v is None:
+                        continue
+                    s = str(v).strip()
+                    if s.lower().startswith("http"):
+                        urls.add(s)
+    finally:
+        wb.close()
+    return urls
+
+
+def _collect_referenced_r2_urls_for_out_dir(out_dir: str) -> set:
+    urls: set = set()
+    project_dir = _project_output_dir(out_dir)
+    recipes = os.path.join(project_dir, "Recipes.xlsx")
+    legacy = os.path.join(project_dir, "images.xlsx")
+    pin_path = os.path.join(project_dir, "Pin_01.xlsx")
+    if os.path.isfile(recipes):
+        urls |= _collect_http_urls_from_workbook(recipes)
+    elif os.path.isfile(legacy):
+        urls |= _collect_http_urls_from_workbook(legacy)
+    if os.path.isfile(pin_path):
+        urls |= _collect_http_urls_from_workbook(pin_path)
+    return urls
+
+
+def _r2_object_key_from_url(url: str, public_bases: List[str]) -> Optional[str]:
+    u = str(url or "").strip()
+    if not u.lower().startswith("http"):
+        return None
+    u_clean = u.split("?")[0].split("#")[0]
+    for base in public_bases:
+        b = str(base or "").strip().rstrip("/")
+        if not b:
+            continue
+        if u_clean.startswith(b + "/"):
+            from urllib.parse import unquote
+
+            return unquote(u_clean[len(b) + 1 :])
+    from urllib.parse import unquote, urlparse
+
+    path = unquote((urlparse(u_clean).path or "")).lstrip("/")
+    if path.startswith(("midjourney_", "pinterest_")):
+        return path
+    return None
+
+
+def _run_with_site_env(site_id: str, out_dir: str, fn: Callable[[], Any]) -> Any:
+    with _site_config_lock:
+        old_sid = os.environ.get("PINTEREST_SITE_ID")
+        old_out = os.environ.get("PINTEREST_OUT_DIR")
+        try:
+            if site_id:
+                os.environ["PINTEREST_SITE_ID"] = site_id
+            else:
+                os.environ.pop("PINTEREST_SITE_ID", None)
+            if out_dir:
+                os.environ["PINTEREST_OUT_DIR"] = out_dir
+            else:
+                os.environ.pop("PINTEREST_OUT_DIR", None)
+            return fn()
+        finally:
+            if old_sid is not None:
+                os.environ["PINTEREST_SITE_ID"] = old_sid
+            else:
+                os.environ.pop("PINTEREST_SITE_ID", None)
+            if old_out is not None:
+                os.environ["PINTEREST_OUT_DIR"] = old_out
+            else:
+                os.environ.pop("PINTEREST_OUT_DIR", None)
+
+
+def _project_site_env(label: str) -> tuple:
+    u = _unit_by_label(label)
+    if not u:
+        return "", ""
+    e = u.get("env") or {}
+    return (
+        str(e.get("PINTEREST_SITE_ID", "") or "").strip(),
+        str(e.get("PINTEREST_OUT_DIR", "") or "").strip(),
+    )
+
+
+def _cleanup_target_labels(project: str = "") -> List[str]:
+    p = str(project or "").strip()
+    if p:
+        if not is_allowed_project_label(p):
+            return []
+        return [p]
+    return flat_ui_labels()
+
+
+def _preview_local_cleanup(project: str = "") -> Dict[str, Any]:
+    labels = _cleanup_target_labels(project)
+    output_files = 0
+    output_bytes = 0
+    cf_prune = 0
+    per_project: List[Dict[str, Any]] = []
+    site_ids: set = set()
+    for label in labels:
+        out_dir = all_out_name_for_label(label)
+        sid, _ = _project_site_env(label)
+        if sid:
+            site_ids.add(sid)
+        imgs = os.path.join(_project_output_dir(out_dir), "output_images")
+        n, sz = _dir_size_and_count(imgs)
+        output_files += n
+        output_bytes += sz
+        per_project.append({"label": label, "out_dir": out_dir, "output_images_files": n, "output_images_bytes": sz})
+    cf_freed = 0
+    if os.path.isdir(_CF_BUILDS_ROOT):
+        for site_nm in os.listdir(_CF_BUILDS_ROOT):
+            if site_ids and site_nm not in site_ids:
+                continue
+            site_path = os.path.join(_CF_BUILDS_ROOT, site_nm)
+            if not os.path.isdir(site_path):
+                continue
+            builds = []
+            for build_nm in os.listdir(site_path):
+                build_path = os.path.join(site_path, build_nm)
+                if os.path.isdir(build_path):
+                    try:
+                        builds.append((os.path.getmtime(build_path), build_path))
+                    except OSError:
+                        builds.append((0, build_path))
+            builds.sort(key=lambda x: x[0], reverse=True)
+            for i, (_mtime, build_path) in enumerate(builds):
+                if i < 1:
+                    continue
+                cf_prune += 1
+                _n, sz = _dir_size_and_count(build_path)
+                cf_freed += sz
+    return {
+        "projects": per_project,
+        "output_images_files": output_files,
+        "output_images_bytes": output_bytes,
+        "output_images_bytes_human": _format_bytes(output_bytes),
+        "cf_builds_prune": cf_prune,
+        "cf_builds_freed_estimate": _format_bytes(cf_freed),
+    }
+
+
+def _execute_local_cleanup(project: str = "", *, archive: bool = True) -> Dict[str, Any]:
+    labels = _cleanup_target_labels(project)
+    if not labels:
+        return {"ok": False, "error": "Unknown project"}
+    archive_session = _new_archive_session_dir() if archive else ""
+    archive_rel = (
+        os.path.relpath(archive_session, _APP_ROOT).replace("\\", "/") if archive_session else ""
+    )
+    results: List[Dict[str, Any]] = []
+    site_ids: set = set()
+    for label in labels:
+        out_dir = all_out_name_for_label(label)
+        sid, _ = _project_site_env(label)
+        if sid:
+            site_ids.add(sid)
+        row: Dict[str, Any] = {"label": label, "out_dir": out_dir}
+        try:
+            if archive:
+                row["archive"] = _archive_output_images_only(out_dir, archive_session)
+            row["clear"] = _clear_output_images_dir(out_dir)
+            row["status"] = "ok"
+        except Exception as e:
+            row["status"] = f"error: {e}"
+        results.append(row)
+    cf_stats = {"removed_dirs": 0, "kept_dirs": 0, "freed_human": _format_bytes(0)}
+    if os.path.isdir(_CF_BUILDS_ROOT):
+        total_removed = 0
+        total_kept = 0
+        total_freed = 0
+        if site_ids:
+            for sid in sorted(site_ids):
+                st = _cleanup_cf_builds(keep_latest_per_site=1, site_id_filter=sid)
+                total_removed += int(st.get("removed_dirs") or 0)
+                total_kept += int(st.get("kept_dirs") or 0)
+                total_freed += int(st.get("freed_bytes") or 0)
+        else:
+            st = _cleanup_cf_builds(keep_latest_per_site=1)
+            total_removed = int(st.get("removed_dirs") or 0)
+            total_kept = int(st.get("kept_dirs") or 0)
+            total_freed = int(st.get("freed_bytes") or 0)
+        cf_stats = {
+            "removed_dirs": total_removed,
+            "kept_dirs": total_kept,
+            "freed_human": _format_bytes(total_freed),
+        }
+    _PROJECT_STATS_CACHE.clear()
+    return {
+        "ok": True,
+        "archive_rel": archive_rel,
+        "projects": results,
+        "cf_builds": cf_stats,
+    }
+
+
+def _group_projects_by_r2_bucket(labels: List[str]) -> Dict[str, Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+    mod = _load_pipeline_a1_config()
+    if mod is None:
+        return grouped
+    for label in labels:
+        sid, out_dir = _project_site_env(label)
+        if not sid:
+            continue
+
+        def _load_cfg(_sid=sid, _out=out_dir):
+            return mod.get_r2_config(mod.load_keys())
+
+        try:
+            cfg = _run_with_site_env(sid, out_dir, _load_cfg)
+        except Exception:
+            continue
+        bucket = str((cfg or {}).get("bucket") or "").strip()
+        if not bucket:
+            continue
+        entry = grouped.setdefault(
+            bucket,
+            {
+                "bucket": bucket,
+                "public_base_url": str((cfg or {}).get("public_base_url") or "").strip(),
+                "labels": [],
+                "site_ids": [],
+            },
+        )
+        entry["labels"].append(label)
+        entry["site_ids"].append(sid)
+        if not entry.get("public_base_url"):
+            entry["public_base_url"] = str((cfg or {}).get("public_base_url") or "").strip()
+    return grouped
+
+
+def _preview_r2_cleanup(project: str = "") -> Dict[str, Any]:
+    labels = _cleanup_target_labels(project)
+    if not labels:
+        return {"ok": False, "error": "Unknown project", "buckets": []}
+    grouped = _group_projects_by_r2_bucket(labels)
+    mod = _load_pipeline_a1_config()
+    buckets_out: List[Dict[str, Any]] = []
+    for bucket, meta in grouped.items():
+        referenced_keys: set = set()
+        public_bases: List[str] = []
+        pub = str(meta.get("public_base_url") or "").strip()
+        if pub:
+            public_bases.append(pub)
+        for label in meta.get("labels") or []:
+            out_dir = all_out_name_for_label(label)
+            for url in _collect_referenced_r2_urls_for_out_dir(out_dir):
+                key = _r2_object_key_from_url(url, public_bases)
+                if key:
+                    referenced_keys.add(key)
+        would_delete = 0
+        would_keep = 0
+        sample_delete: List[str] = []
+        if mod is not None:
+            sid = (meta.get("site_ids") or [""])[0]
+            out_dir = all_out_name_for_label((meta.get("labels") or [""])[0])
+
+            def _scan(_sid=sid, _out=out_dir, _bucket=bucket):
+                nonlocal would_delete, would_keep
+                client = mod.make_r2_client(mod.load_keys())
+                for prefix in _R2_CLEANUP_PREFIXES:
+                    token = None
+                    while True:
+                        kwargs = {"Bucket": _bucket, "Prefix": prefix, "MaxKeys": 1000}
+                        if token:
+                            kwargs["ContinuationToken"] = token
+                        resp = client.list_objects_v2(**kwargs)
+                        for obj in resp.get("Contents") or []:
+                            key = str(obj.get("Key") or "")
+                            if not key:
+                                continue
+                            if key in referenced_keys:
+                                would_keep += 1
+                            else:
+                                would_delete += 1
+                                if len(sample_delete) < 8:
+                                    sample_delete.append(key)
+                        if not resp.get("IsTruncated"):
+                            break
+                        token = resp.get("NextContinuationToken")
+
+            try:
+                _run_with_site_env(sid, out_dir, _scan)
+            except Exception as e:
+                buckets_out.append(
+                    {
+                        "bucket": bucket,
+                        "labels": meta.get("labels") or [],
+                        "error": str(e),
+                        "referenced_keys": len(referenced_keys),
+                        "would_delete": 0,
+                        "would_keep": 0,
+                        "sample_delete": [],
+                    }
+                )
+                continue
+        buckets_out.append(
+            {
+                "bucket": bucket,
+                "labels": meta.get("labels") or [],
+                "referenced_keys": len(referenced_keys),
+                "would_delete": would_delete,
+                "would_keep": would_keep,
+                "sample_delete": sample_delete,
+            }
+        )
+    return {"ok": True, "buckets": buckets_out}
+
+
+def _execute_r2_cleanup(project: str = "", *, dry_run: bool = False) -> Dict[str, Any]:
+    labels = _cleanup_target_labels(project)
+    if not labels:
+        return {"ok": False, "error": "Unknown project"}
+    grouped = _group_projects_by_r2_bucket(labels)
+    mod = _load_pipeline_a1_config()
+    if mod is None:
+        return {"ok": False, "error": "a1_config not found"}
+    buckets_out: List[Dict[str, Any]] = []
+    for bucket, meta in grouped.items():
+        referenced_keys: set = set()
+        public_bases: List[str] = []
+        pub = str(meta.get("public_base_url") or "").strip()
+        if pub:
+            public_bases.append(pub)
+        for label in meta.get("labels") or []:
+            out_dir = all_out_name_for_label(label)
+            for url in _collect_referenced_r2_urls_for_out_dir(out_dir):
+                key = _r2_object_key_from_url(url, public_bases)
+                if key:
+                    referenced_keys.add(key)
+        deleted = 0
+        kept = 0
+        errors: List[str] = []
+        sid = (meta.get("site_ids") or [""])[0]
+        out_dir = all_out_name_for_label((meta.get("labels") or [""])[0])
+
+        def _delete(_sid=sid, _out=out_dir, _bucket=bucket):
+            nonlocal deleted, kept
+            client = mod.make_r2_client(mod.load_keys())
+            for prefix in _R2_CLEANUP_PREFIXES:
+                token = None
+                while True:
+                    kwargs = {"Bucket": _bucket, "Prefix": prefix, "MaxKeys": 1000}
+                    if token:
+                        kwargs["ContinuationToken"] = token
+                    resp = client.list_objects_v2(**kwargs)
+                    keys_batch: List[str] = []
+                    for obj in resp.get("Contents") or []:
+                        key = str(obj.get("Key") or "")
+                        if not key:
+                            continue
+                        if key in referenced_keys:
+                            kept += 1
+                            continue
+                        if dry_run:
+                            deleted += 1
+                        else:
+                            keys_batch.append(key)
+                    if keys_batch and not dry_run:
+                        try:
+                            client.delete_objects(
+                                Bucket=_bucket,
+                                Delete={"Objects": [{"Key": k} for k in keys_batch], "Quiet": True},
+                            )
+                            deleted += len(keys_batch)
+                        except Exception as e:
+                            errors.append(str(e))
+                    if not resp.get("IsTruncated"):
+                        break
+                    token = resp.get("NextContinuationToken")
+
+        try:
+            _run_with_site_env(sid, out_dir, _delete)
+        except Exception as e:
+            buckets_out.append(
+                {
+                    "bucket": bucket,
+                    "labels": meta.get("labels") or [],
+                    "error": str(e),
+                    "deleted": 0,
+                    "kept": 0,
+                }
+            )
+            continue
+        buckets_out.append(
+            {
+                "bucket": bucket,
+                "labels": meta.get("labels") or [],
+                "referenced_keys": len(referenced_keys),
+                "deleted": deleted,
+                "kept": kept,
+                "errors": errors,
+                "dry_run": dry_run,
+            }
+        )
+    return {"ok": True, "buckets": buckets_out, "dry_run": dry_run}
+
+
+@app.route("/api/cleanup/preview")
+def api_cleanup_preview():
+    project = str(request.args.get("project") or "").strip()
+    return jsonify(
+        {
+            "ok": True,
+            "project": project or "all",
+            "local": _preview_local_cleanup(project),
+            "r2": _preview_r2_cleanup(project),
+        }
+    )
+
+
+@app.route("/api/cleanup/local", methods=["POST"])
+def api_cleanup_local():
+    data = request.get_json(silent=True) or {}
+    project = str(data.get("project") or request.form.get("project") or "").strip()
+    result = _execute_local_cleanup(project, archive=True)
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route("/api/cleanup/r2-unused", methods=["POST"])
+def api_cleanup_r2_unused():
+    data = request.get_json(silent=True) or {}
+    project = str(data.get("project") or request.form.get("project") or "").strip()
+    confirm = str(data.get("confirm") or request.form.get("confirm") or "").strip()
+    dry_run = str(data.get("dry_run") or request.form.get("dry_run") or "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not dry_run and confirm != "DELETE R2":
+        return jsonify({"ok": False, "error": "Confirmation required: send confirm=DELETE R2"}), 400
+    result = _execute_r2_cleanup(project, dry_run=dry_run)
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
 
 
 # ------------------------------------------------------------------
@@ -5286,6 +5936,7 @@ def index():
                 <button class="btn btn-sm btn-dark project-action" data-action="pin_bulk" data-step-key="PIN BULK" onclick='startProjectAction({lidj}, {titlej}, "pin_bulk", this)'>PIN BULK</button>
                 <button class="btn btn-sm cf-upload-btn project-action" data-action="cf_upload" data-step-key="CF UPLOAD" data-project={titlej} disabled title="Select a theme and set Cloudflare Pages project name to enable" onclick='startProjectAction({lidj}, {titlej}, "cf_upload", this)' style="background:#f48120;color:#fff;border:1px solid #d96e10;">CF UPLOAD</button>
                 <button class="btn btn-sm btn-outline-warning cf-versions-btn" data-project={titlej} data-log-id={lidj} disabled title="Show recent Cloudflare Pages deployments" onclick='showCfVersions({titlej}, {lidj})'>Versions</button>
+                <button class="btn btn-sm btn-outline-warning" data-step-key="CLEANUP LOCAL PROJECT" onclick='confirmCleanupLocal({titlej})'>Cleanup</button>
                 <button class="btn btn-sm btn-outline-danger project-clear-log" data-step-key="CLEAR PROJECT LOG" onclick='clearProjectLog({lidj})'>CLEAR LOG</button>
               </div>
             </div>
@@ -5529,24 +6180,32 @@ def index():
         function _attachStepTooltip(btn, text) {{
           if (!btn || text == null) return;
           var t = String(text);
+          var html = t.replace(/\\n/g, "<br>");
           btn.setAttribute("title", t);
           btn.setAttribute("data-bs-toggle", "tooltip");
           btn.setAttribute("data-bs-placement", "top");
+          btn.setAttribute("data-bs-html", "true");
           if (typeof bootstrap !== "undefined" && bootstrap.Tooltip) {{
             try {{
               var old = bootstrap.Tooltip.getInstance(btn);
               if (old) old.dispose();
-              new bootstrap.Tooltip(btn, {{ customClass: "step-col-tooltip", trigger: "hover focus" }});
+              new bootstrap.Tooltip(btn, {{
+                customClass: "step-col-tooltip",
+                trigger: "hover focus",
+                html: true,
+                title: html
+              }});
             }} catch (e) {{}}
           }}
         }}
 
         function applyStepButtonTooltips() {{
-          // Per-project card footer (START, JSON, …, PIN BULK)
-          document.querySelectorAll(".card-footer .project-action[data-step-key]").forEach(function(btn) {{
+          // Per-project card footer (all buttons with data-step-key)
+          document.querySelectorAll(".card-footer [data-step-key]").forEach(function(btn) {{
             _attachStepTooltip(btn, _runStepTooltip(btn.getAttribute("data-step-key")));
           }});
-          document.querySelectorAll(".card-footer .project-clear-log, .card-footer button[onclick*='clearProjectLog']").forEach(function(btn) {{
+          document.querySelectorAll(".card-footer button[onclick*='clearProjectLog']").forEach(function(btn) {{
+            if (btn.getAttribute("data-step-key")) return;
             btn.setAttribute("data-step-key", "CLEAR PROJECT LOG");
             _attachStepTooltip(btn, _runStepTooltip("CLEAR PROJECT LOG"));
           }});
@@ -5646,6 +6305,97 @@ def index():
           if (!ok) return;
           var form = document.getElementById("deleteAllForm");
           if (form) form.submit();
+        }}
+
+        function _cleanupPreviewUrl(projectLabel) {{
+          var q = projectLabel ? ("?project=" + encodeURIComponent(projectLabel)) : "";
+          return "/api/cleanup/preview" + q;
+        }}
+
+        async function confirmCleanupLocal(projectLabel) {{
+          var scope = projectLabel ? ("project " + projectLabel) : "ALL projects";
+          try {{
+            var prev = await fetch(_cleanupPreviewUrl(projectLabel)).then(function(r) {{ return r.json(); }});
+            if (!prev || !prev.ok) {{
+              alert("Preview failed.");
+              return;
+            }}
+            var loc = prev.local || {{}};
+            var msg = "Cleanup LOCAL for " + scope + ":\\n\\n";
+            msg += "• output_images: " + (loc.output_images_files || 0) + " files (" + (loc.output_images_bytes_human || "0 B") + ")\\n";
+            msg += "• Old CF builds to remove: " + (loc.cf_builds_prune || 0) + " (~" + (loc.cf_builds_freed_estimate || "0 B") + ")\\n\\n";
+            msg += "Keeps Recipes.xlsx, Pin_01.xlsx, and all R2 images.\\n";
+            msg += "Pin JPGs are archived first under ALL/archive/<date>/.\\n\\nContinue?";
+            if (!window.confirm(msg)) return;
+            var res = await fetch("/api/cleanup/local", {{
+              method: "POST",
+              headers: {{"Content-Type": "application/json"}},
+              body: JSON.stringify({{project: projectLabel || ""}})
+            }}).then(function(r) {{ return r.json(); }});
+            if (!res.ok) {{
+              alert("Cleanup failed: " + (res.error || "unknown"));
+              return;
+            }}
+            var lines = ["Cleanup local done."];
+            if (res.archive_rel) lines.push("Archive: " + res.archive_rel);
+            if (res.cf_builds) {{
+              lines.push("CF builds removed: " + (res.cf_builds.removed_dirs || 0) + " (~" + (res.cf_builds.freed_human || "0 B") + ")");
+            }}
+            alert(lines.join("\\n"));
+          }} catch (e) {{
+            alert("Cleanup error: " + e);
+          }}
+        }}
+
+        async function confirmCleanupR2(projectLabel) {{
+          var scope = projectLabel ? ("project " + projectLabel) : "ALL projects";
+          try {{
+            var prev = await fetch(_cleanupPreviewUrl(projectLabel)).then(function(r) {{ return r.json(); }});
+            if (!prev || !prev.ok) {{
+              alert("Preview failed.");
+              return;
+            }}
+            var r2 = prev.r2 || {{}};
+            var buckets = r2.buckets || [];
+            if (!buckets.length) {{
+              alert("No R2 buckets configured for " + scope + ".");
+              return;
+            }}
+            var msg = "Cleanup R2 UNUSED for " + scope + ":\\n\\n";
+            buckets.forEach(function(b) {{
+              if (b.error) {{
+                msg += "• Bucket " + b.bucket + ": ERROR — " + b.error + "\\n";
+                return;
+              }}
+              msg += "• Bucket " + b.bucket + " (" + (b.labels || []).join(", ") + "):\\n";
+              msg += "  keep " + (b.would_keep || 0) + ", delete " + (b.would_delete || 0) + " unreferenced\\n";
+            }});
+            msg += "\\nURLs still in Recipes.xlsx / Pin_01.xlsx are kept.\\n";
+            msg += "WordPress / live sites must not need deleted images.\\n\\nContinue?";
+            if (!window.confirm(msg)) return;
+            var typed = window.prompt('Type DELETE R2 to confirm permanent R2 deletion');
+            if (typed !== "DELETE R2") return;
+            var res = await fetch("/api/cleanup/r2-unused", {{
+              method: "POST",
+              headers: {{"Content-Type": "application/json"}},
+              body: JSON.stringify({{project: projectLabel || "", confirm: "DELETE R2"}})
+            }}).then(function(r) {{ return r.json(); }});
+            if (!res.ok) {{
+              alert("R2 cleanup failed: " + (res.error || "unknown"));
+              return;
+            }}
+            var lines = ["R2 cleanup done."];
+            (res.buckets || []).forEach(function(b) {{
+              if (b.error) {{
+                lines.push(b.bucket + ": ERROR — " + b.error);
+              }} else {{
+                lines.push(b.bucket + ": deleted " + (b.deleted || 0) + ", kept " + (b.kept || 0));
+              }}
+            }});
+            alert(lines.join("\\n"));
+          }} catch (e) {{
+            alert("R2 cleanup error: " + e);
+          }}
         }}
 
         function _restoreProjectLogsFromStorage() {{
@@ -7140,6 +7890,8 @@ def index():
             <form id="deleteAllForm" action="/delete-all-folder" method="post" style="display:inline-block;">
               <button type="button" class="btn btn-danger ms-2" id="deleteAllBtn" data-step-key="DELETE ALL" onclick="confirmDeleteAll()">Delete 'ALL'</button>
             </form>
+            <button type="button" class="btn btn-outline-warning ms-2" id="cleanupLocalBtn" data-step-key="CLEANUP LOCAL" onclick="confirmCleanupLocal('')">Cleanup local</button>
+            <button type="button" class="btn btn-outline-danger ms-2" id="cleanupR2Btn" data-step-key="CLEANUP R2" onclick="confirmCleanupR2('')">Cleanup R2 unused</button>
           </div>
         </div>
 
