@@ -27,6 +27,7 @@ import sys
 import time
 import random
 import logging
+from datetime import datetime
 from typing import Callable, Any, Optional, Dict, List
 
 
@@ -1547,7 +1548,32 @@ _SITE_SECRET_REUSE_KEYS = (
 )
 
 
+def _normalize_sites_doc(doc: dict) -> dict:
+    """Fix common sites.json shape issues before write (e.g. category_id_mapping as JSON string)."""
+    if not isinstance(doc, dict):
+        return doc
+    sites = doc.get("sites")
+    if not isinstance(sites, list):
+        return doc
+    folder = str(doc.get("pipeline_code_folder", "") or "").strip() or "A1-Pinterest_01"
+    mod = _a1_config_module_for_pipeline_folder(folder)
+    norm_fn = getattr(mod, "normalize_category_id_mapping", None) if mod else None
+    if not norm_fn:
+        return doc
+    for s in sites:
+        if not isinstance(s, dict):
+            continue
+        st = s.get("settings")
+        if not isinstance(st, dict):
+            continue
+        parsed = norm_fn(st.get("category_id_mapping"))
+        if parsed:
+            st["category_id_mapping"] = parsed
+    return doc
+
+
 def _write_sites_doc(doc: dict) -> None:
+    doc = _normalize_sites_doc(doc)
     os.makedirs(os.path.dirname(SITES_FILE_PATH) or ".", exist_ok=True)
     txt = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
     tmp = SITES_FILE_PATH + ".tmp"
@@ -3621,6 +3647,10 @@ _STEP_ACTION_TOOLTIPS: Dict[str, Dict[str, str]] = {
         "run": "Clears this project's log panel only — does not change Recipes.xlsx or Pin_01.xlsx.",
         "clear": "Clears this project's log panel only — does not change Recipes.xlsx or Pin_01.xlsx.",
     },
+    "DELETE ALL": {
+        "run": "Archives Recipes.xlsx, Pin_01.xlsx, output_images/ to ALL/archive/<date>/ then clears pipeline data.",
+        "clear": "Archives Recipes.xlsx, Pin_01.xlsx, output_images/ to ALL/archive/<date>/ then clears pipeline data.",
+    },
 }
 
 
@@ -4198,66 +4228,212 @@ def stop_scripts():
     return jsonify({"status": "success", "message": "All running scripts have been stopped."})
 
 
-# -------------------- 3) Delete 'ALL' Folder --------------------
+# -------------------- 3) Delete 'ALL' — archive then clear --------------------
+
+def _all_archive_root() -> str:
+    return os.path.join(_APP_ROOT, "ALL", "archive")
+
+
+def _new_archive_session_dir() -> str:
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    path = os.path.join(_all_archive_root(), stamp)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _project_output_dir(out_dir: str) -> str:
+    return os.path.join(_APP_ROOT, "ALL", out_dir)
+
+
+def _archive_project_outputs(out_dir: str, archive_session: str) -> Dict[str, str]:
+    """Copy Recipes.xlsx, Pin_01.xlsx, output_images/ into ALL/archive/<stamp>/<out_dir>/."""
+    project_dir = _project_output_dir(out_dir)
+    arch_dir = os.path.join(archive_session, out_dir)
+    os.makedirs(arch_dir, exist_ok=True)
+    out: Dict[str, str] = {}
+
+    recipes = os.path.join(project_dir, "Recipes.xlsx")
+    legacy = os.path.join(project_dir, "images.xlsx")
+    if os.path.isfile(recipes):
+        shutil.copy2(recipes, os.path.join(arch_dir, "Recipes.xlsx"))
+        out["Recipes.xlsx"] = "archived"
+    elif os.path.isfile(legacy):
+        shutil.copy2(legacy, os.path.join(arch_dir, "images.xlsx"))
+        out["images.xlsx"] = "archived"
+    else:
+        out["Recipes.xlsx"] = "missing"
+
+    pin_path = os.path.join(project_dir, "Pin_01.xlsx")
+    if os.path.isfile(pin_path):
+        shutil.copy2(pin_path, os.path.join(arch_dir, "Pin_01.xlsx"))
+        out["Pin_01.xlsx"] = "archived"
+    else:
+        out["Pin_01.xlsx"] = "missing"
+
+    imgs_src = os.path.join(project_dir, "output_images")
+    imgs_dst = os.path.join(arch_dir, "output_images")
+    if os.path.isdir(imgs_src):
+        if os.path.exists(imgs_dst):
+            shutil.rmtree(imgs_dst)
+        shutil.copytree(imgs_src, imgs_dst)
+        n = sum(len(files) for _r, _d, files in os.walk(imgs_dst))
+        out["output_images"] = f"archived ({n} files)"
+    else:
+        out["output_images"] = "missing"
+
+    return out
+
+
+def _clear_recipes_pipeline_rows(file_path: str) -> int:
+    """Clear pipeline columns in Recipes.xlsx; keep Title, Recipe, Generated At."""
+    protected_start_cols = {"title", "recipe", "generated at"}
+    wb = openpyxl.load_workbook(file_path)
+    sh = wb.active
+    max_row = int(sh.max_row or 1)
+    max_col = int(sh.max_column or 1)
+    header_values = next(
+        sh.iter_rows(min_row=1, max_row=1, min_col=1, max_col=max_col, values_only=True),
+        tuple(),
+    )
+    clear_col_idxs = []
+    for c in range(1, max_col + 1):
+        hv = header_values[c - 1] if c - 1 < len(header_values) else None
+        h = str(hv).strip().lower() if hv is not None else ""
+        if h in protected_start_cols:
+            continue
+        clear_col_idxs.append(c)
+    cleared_rows = 0
+    if max_row >= 2:
+        for r in range(2, max_row + 1):
+            for c in clear_col_idxs:
+                sh.cell(row=r, column=c, value=None)
+            cleared_rows += 1
+    wb.save(file_path)
+    wb.close()
+    return cleared_rows
+
+
+def _clear_project_after_archive(out_dir: str) -> Dict[str, str]:
+    project_dir = _project_output_dir(out_dir)
+    out: Dict[str, str] = {}
+    file_path = _project_excel_path_by_out_dir(out_dir)
+    if os.path.isfile(file_path):
+        try:
+            rows = _clear_recipes_pipeline_rows(file_path)
+            out["Recipes.xlsx"] = f"cleared ({rows} rows)"
+        except Exception as e:
+            out["Recipes.xlsx"] = f"error: {e}"
+    else:
+        out["Recipes.xlsx"] = "missing"
+
+    imgs = os.path.join(project_dir, "output_images")
+    try:
+        if os.path.isdir(imgs):
+            shutil.rmtree(imgs)
+        os.makedirs(imgs, exist_ok=True)
+        out["output_images"] = "cleared"
+    except Exception as e:
+        out["output_images"] = f"error: {e}"
+
+    pin_path = os.path.join(project_dir, "Pin_01.xlsx")
+    try:
+        if os.path.isfile(pin_path):
+            os.remove(pin_path)
+            out["Pin_01.xlsx"] = "removed"
+        else:
+            out["Pin_01.xlsx"] = "missing"
+    except Exception as e:
+        out["Pin_01.xlsx"] = f"error: {e}"
+
+    return out
+
+
 @app.route("/delete-all-folder", methods=["POST"])
 def delete_all_folder():
     """
-    Clear rows inside project Recipes.xlsx files (row 2..end), keep headers.
-    Safer than deleting the ALL folder.
+    Archive then clear all projects:
+    - ALL/archive/<YYYY-MM-DD_HH-MM-SS>/<out_dir>/Recipes.xlsx, Pin_01.xlsx, output_images/
+    - Clear pipeline columns in Recipes.xlsx (keep Title, Recipe, Generated At)
+    - Empty output_images/ and remove Pin_01.xlsx from each project folder
     """
+    archive_session = _new_archive_session_dir()
+    archive_rel = os.path.relpath(archive_session, _APP_ROOT).replace("\\", "/")
     results = []
     total_cleared = 0
     any_found = False
 
-    protected_start_cols = {"title", "recipe", "generated at"}
-
     for label in flat_ui_labels():
         out_dir = all_out_name_for_label(label)
-        file_path = _project_excel_path_by_out_dir(out_dir)
-        if not os.path.exists(file_path):
-            results.append((label, "missing", 0, file_path))
+        project_dir = _project_output_dir(out_dir)
+        has_any = (
+            os.path.isfile(os.path.join(project_dir, "Recipes.xlsx"))
+            or os.path.isfile(os.path.join(project_dir, "images.xlsx"))
+            or os.path.isfile(os.path.join(project_dir, "Pin_01.xlsx"))
+            or os.path.isdir(os.path.join(project_dir, "output_images"))
+        )
+        if not has_any:
+            results.append({
+                "label": label,
+                "out_dir": out_dir,
+                "status": "missing",
+                "archive": {},
+                "clear": {},
+            })
             continue
         any_found = True
         try:
-            wb = openpyxl.load_workbook(file_path)
-            sh = wb.active
-            max_row = int(sh.max_row or 1)
-            max_col = int(sh.max_column or 1)
-            header_values = next(
-                sh.iter_rows(min_row=1, max_row=1, min_col=1, max_col=max_col, values_only=True),
-                tuple(),
-            )
-            clear_col_idxs = []
-            for c in range(1, max_col + 1):
-                hv = header_values[c - 1] if c - 1 < len(header_values) else None
-                h = str(hv).strip().lower() if hv is not None else ""
-                if h in protected_start_cols:
-                    continue
-                clear_col_idxs.append(c)
-            cleared_rows = 0
-            if max_row >= 2:
-                for r in range(2, max_row + 1):
-                    for c in clear_col_idxs:
-                        sh.cell(row=r, column=c, value=None)
-                    cleared_rows += 1
-            wb.save(file_path)
-            wb.close()
-            total_cleared += int(cleared_rows)
-            results.append((label, "ok", int(cleared_rows), file_path))
+            archived = _archive_project_outputs(out_dir, archive_session)
+            cleared = _clear_project_after_archive(out_dir)
+            rows_part = cleared.get("Recipes.xlsx", "")
+            if "cleared (" in rows_part:
+                try:
+                    total_cleared += int(rows_part.split("cleared (")[1].split(" rows")[0])
+                except (ValueError, IndexError):
+                    pass
+            results.append({
+                "label": label,
+                "out_dir": out_dir,
+                "status": "ok",
+                "archive": archived,
+                "clear": cleared,
+            })
         except Exception as e:
-            results.append((label, f"error: {e}", 0, file_path))
+            results.append({
+                "label": label,
+                "out_dir": out_dir,
+                "status": f"error: {e}",
+                "archive": {},
+                "clear": {},
+            })
 
     _PROJECT_STATS_CACHE.clear()
 
     if not any_found:
-        return "<h1>No Recipes.xlsx files found for projects.</h1><a href='/'>Back</a>"
-
-    lines = [f"<h1>Cleared rows in Recipes.xlsx files. Total rows cleared: {total_cleared}</h1>"]
-    lines.append("<ul>")
-    for label, status, rows, fp in results:
-        lines.append(
-            f"<li><strong>{label}</strong>: {status} | cleared_rows={rows}<br><code>{fp}</code></li>"
+        return (
+            "<h1>No project output found to archive.</h1>"
+            f"<p>Expected under <code>ALL/&lt;out_dir&gt;/</code></p>"
+            "<a href='/'>Back</a>"
         )
+
+    lines = [
+        "<h1>Archive + clear completed</h1>",
+        f"<p><strong>Archive folder:</strong> <code>{archive_rel}</code></p>",
+        f"<p>Total recipe rows cleared (pipeline columns only): <strong>{total_cleared}</strong></p>",
+        "<ul>",
+    ]
+    for row in results:
+        lines.append(f"<li><strong>{row['label']}</strong> (<code>{row['out_dir']}</code>) — {row['status']}")
+        if row.get("archive"):
+            lines.append("<ul>")
+            for k, v in row["archive"].items():
+                lines.append(f"<li>Archive {k}: {v}</li>")
+            lines.append("</ul>")
+        if row.get("clear"):
+            lines.append("<ul>")
+            for k, v in row["clear"].items():
+                lines.append(f"<li>Clear {k}: {v}</li>")
+            lines.append("</ul>")
+        lines.append("</li>")
     lines.append("</ul>")
     lines.append("<a href='/'>Back</a>")
     return "".join(lines)
@@ -5425,6 +5601,21 @@ def index():
           (projectFolders || []).forEach(function(logId) {{
             clearProjectLog(logId);
           }});
+        }}
+
+        function confirmDeleteAll() {{
+          var ok = window.confirm(
+            "⚠️ DANGEROUS ACTION — Delete ALL\\n\\n" +
+            "For EVERY project this will:\\n" +
+            "1) Archive Recipes.xlsx, Pin_01.xlsx, and output_images/ to ALL/archive/<date-time>/\\n" +
+            "2) Clear pipeline columns in Recipes.xlsx (Title, Recipe, Generated At stay)\\n" +
+            "3) Empty output_images/ folders\\n" +
+            "4) Remove Pin_01.xlsx\\n\\n" +
+            "This cannot be undone from the dashboard. Continue?"
+          );
+          if (!ok) return;
+          var form = document.getElementById("deleteAllForm");
+          if (form) form.submit();
         }}
 
         function _restoreProjectLogsFromStorage() {{
@@ -7034,8 +7225,8 @@ def index():
             <button class="number-button" data-step-key="AUTO SAFE" data-number="AUTO" onclick="startLog('/stream-all-auto-safe', this)">AUTO SAFE (ALL STEPS)</button>
             <button class="number-button" type="button" data-step-key="CLEAR ALL LOGS" onclick="clearAllLogs()">CLEAR ALL LOGS</button>
 
-            <form action="/delete-all-folder" method="post" style="display:inline-block;">
-              <button class="btn btn-secondary ms-2" type="submit">Delete 'ALL'</button>
+            <form id="deleteAllForm" action="/delete-all-folder" method="post" style="display:inline-block;">
+              <button type="button" class="btn btn-danger ms-2" id="deleteAllBtn" data-step-key="DELETE ALL" onclick="confirmDeleteAll()">Delete 'ALL'</button>
             </form>
           </div>
         </div>

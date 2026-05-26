@@ -121,18 +121,67 @@ def _generate_pin_texts(recipe_name: str, settings: dict, keys: dict) -> dict:
 
 # ---------- Playwright ----------
 
+def _playwright_install_hint(extra: str = "") -> None:
+    py = sys.executable
+    print(f"Python used by this script: {py}", file=sys.stderr)
+    if extra:
+        print(extra, file=sys.stderr)
+    print(
+        "Install Playwright for THIS Python (copy/paste):\n"
+        f'  "{py}" -m pip install playwright\n'
+        f'  "{py}" -m playwright install chromium',
+        file=sys.stderr,
+    )
+
+
 def _ensure_playwright() -> bool:
     try:
         from playwright.sync_api import sync_playwright  # noqa: F401
         return True
-    except ImportError:
-        print(
-            "ERROR: playwright is not installed. Run:\n"
-            "    pip install playwright\n"
-            "    playwright install chromium",
-            file=sys.stderr,
+    except ImportError as e:
+        print(f"ERROR: playwright is not available ({e}).", file=sys.stderr)
+        _playwright_install_hint(
+            "If you already ran pip install, the dashboard may use a different Python than your terminal."
         )
-        return False
+        # One-shot auto-install with the same interpreter as this script
+        try:
+            import subprocess
+            print("Trying auto-install with this Python...", file=sys.stderr)
+            pip = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "playwright"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if pip.stdout.strip():
+                print(pip.stdout.strip(), file=sys.stderr)
+            if pip.returncode != 0 and pip.stderr.strip():
+                print(pip.stderr.strip(), file=sys.stderr)
+                return False
+            from playwright.sync_api import sync_playwright  # noqa: F401
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                check=False,
+                timeout=600,
+            )
+            print("Playwright installed. Re-run PIN IMAGE HTML if browser download just finished.", file=sys.stderr)
+            return True
+        except Exception as install_err:
+            print(f"Auto-install failed: {install_err}", file=sys.stderr)
+            return False
+
+
+def _launch_chromium(playwright):
+    try:
+        return playwright.chromium.launch(headless=True)
+    except Exception as e:
+        msg = str(e).lower()
+        if "executable" in msg or "browser" in msg or "chromium" in msg or "doesn't exist" in msg:
+            print(f"ERROR: Chromium browser missing ({e}).", file=sys.stderr)
+            _playwright_install_hint("Run the chromium install line above, then retry PIN IMAGE HTML.")
+        else:
+            print(f"ERROR: Could not launch Chromium: {e}", file=sys.stderr)
+        raise
 
 
 def _render_pin(page, html: str, output_path: str) -> bool:
@@ -216,7 +265,7 @@ def main() -> int:
     image_paths: list = []
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = _launch_chromium(pw)
         try:
             ctx  = browser.new_context(
                 viewport={"width": PIN_W, "height": PIN_H},

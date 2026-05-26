@@ -237,8 +237,12 @@ def _build_category_resolver(site_row: dict):
     """
     id_to_name: Dict[str, str] = {}
     settings = site_row.get("settings") if isinstance(site_row.get("settings"), dict) else {}
-    mapping = settings.get("category_id_mapping") if isinstance(settings, dict) else None
-    if isinstance(mapping, dict):
+    mapping = a1_config.normalize_category_id_mapping(settings.get("category_id_mapping"))
+    if not mapping:
+        mapping = a1_config.normalize_category_id_mapping(
+            a1_config.load_settings().get("category_id_mapping")
+        )
+    if mapping:
         for name, cid in mapping.items():
             try:
                 id_to_name[str(int(cid))] = str(name).strip()
@@ -267,16 +271,31 @@ def _build_category_resolver(site_row: dict):
     return resolve
 
 
-def _build_articles_data(df: pd.DataFrame, project_out_dir: str, build_dir: str, site_row: dict) -> List[Dict[str, Any]]:
+def _mapping_category_names(site_row: dict) -> List[str]:
+    """WordPress category labels from site settings (for nav even before articles exist)."""
+    settings = site_row.get("settings") if isinstance(site_row.get("settings"), dict) else {}
+    mapping = a1_config.normalize_category_id_mapping(settings.get("category_id_mapping"))
+    if not mapping:
+        mapping = a1_config.normalize_category_id_mapping(
+            a1_config.load_settings().get("category_id_mapping")
+        )
+    return list(mapping.keys()) if mapping else []
+
+
+def _build_articles_data(df: pd.DataFrame, project_out_dir: str, build_dir: str, site_row: dict) -> tuple:
     resolve_cat = _build_category_resolver(site_row)
     articles: List[Dict[str, Any]] = []
     used_slugs: Dict[str, int] = {}
+    skip_no_title = 0
+    skip_no_article = 0
     for idx, row in df.iterrows():
         title = str(row.get("Title", "") or "").strip()
         if not title:
+            skip_no_title += 1
             continue
         body_md = str(row.get("article", "") or "")
         if not body_md.strip():
+            skip_no_article += 1
             continue
         slug = _slugify(title)
         if slug in used_slugs:
@@ -287,6 +306,8 @@ def _build_articles_data(df: pd.DataFrame, project_out_dir: str, build_dir: str,
         featured = _public_image_path(str(row.get("image_1", "") or ""), project_out_dir, build_dir)
         pin_img = _public_image_path(str(row.get("pinterest_image", "") or ""), project_out_dir, build_dir)
         category = resolve_cat(row.get("categories"))
+        if not category:
+            category = str(row.get("category", "") or "").strip()
         recipe_raw = str(row.get("Recipe", "") or "")
         ingredients, instructions = _extract_recipe_parts(recipe_raw)
         articles.append(
@@ -304,7 +325,7 @@ def _build_articles_data(df: pd.DataFrame, project_out_dir: str, build_dir: str,
                 "instructions": instructions,
             }
         )
-    return articles
+    return articles, skip_no_title, skip_no_article
 
 
 def _pick_related(articles: List[Dict[str, Any]], current: Dict[str, Any], n: int = 3) -> List[Dict[str, Any]]:
@@ -404,11 +425,27 @@ def render_theme(
 
     df = pd.read_excel(recipes_path)
     log.info(f"Loaded {len(df)} rows from {recipes_path}")
-    articles = _build_articles_data(df, project_out_dir, build_dir, site_row)
+    articles, skip_no_title, skip_no_article = _build_articles_data(df, project_out_dir, build_dir, site_row)
     log.info(f"Rendering {len(articles)} articles")
+    if skip_no_title:
+        log.info(f"  Skipped {skip_no_title} row(s): missing Title")
+    if skip_no_article:
+        log.warning(
+            f"  Skipped {skip_no_article} row(s): missing `article` column — "
+            "run ARTICLE (A.4-ARTICLES.py) first, then CF UPLOAD again."
+        )
+    if len(df) > 0 and not articles:
+        log.warning(
+            "No recipes will appear on the site until Recipes.xlsx has Title + article filled. "
+            "PIN DATA alone does not create article pages."
+        )
 
     categories: List[str] = []
     seen: set = set()
+    for name in _mapping_category_names(site_row):
+        if name not in seen:
+            seen.add(name)
+            categories.append(name)
     for a in articles:
         c = (a.get("category") or "").strip()
         if c and c not in seen:
