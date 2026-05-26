@@ -1,5 +1,5 @@
 {
-  "openai_api_key": "sk-proj--", 
+  "openai_api_key": "", 
   "openai_model": "gpt-4o-mini",
   "useapi_token": "user:2135-mcrjFuOCYOTTX3YGtx4Gm",
   "useapi_midjourney_channel": "1441888792192618647",
@@ -7,6 +7,8 @@
   "r2_access_key_id": "94c1f4de1aa2450abda86f1126f5892f",
   "r2_secret_access_key": "0c368aab0d5cdbf8cdda2c3a81e3c890ec696690bddd2f83da860b83780c2813",
   "r2_bucket": "elmehdi",
-  "r2_public_base_url": "https://pub-265e755dc4334724956a9d45d1c8bfb0.r2.dev"
+  "r2_public_base_url": "",
+  "cloudflare_api_token": "",
+  "cloudflare_account_id": ""
 }
 
