@@ -12,8 +12,6 @@ from PIL import Image
 from io import BytesIO
 from urllib.parse import quote
 import uuid
-import boto3
-from botocore.config import Config  # NEW
 
 
 def _configure_stdio_utf8() -> None:
@@ -56,33 +54,23 @@ HEADERS = {
 }
 
 # =============================
-# Cloudflare R2 — from keys.json
+# Cloudflare R2 — per active site (PINTEREST_SITE_ID); see a1_config.get_r2_config
 # =============================
-CLOUDFLARE_ACCOUNT_ID = str(_KEYS_A3.get("r2_account_id", ""))
-R2_ACCESS_KEY_ID = str(_KEYS_A3.get("r2_access_key_id", ""))
-R2_SECRET_ACCESS_KEY = str(_KEYS_A3.get("r2_secret_access_key", ""))
-BUCKET_NAME = str(_KEYS_A3.get("r2_bucket", ""))
-R2_PUBLIC_BUCKET_URL = str(_KEYS_A3.get("r2_public_base_url", ""))
+_R2_RUNTIME: dict = {}
 
-R2_ENDPOINT_URL = f"https://{CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
-# Boto3 config: timeouts + retries + pool
-BOTO_CONF = Config(
-    connect_timeout=10,
-    read_timeout=30,
-    retries={"max_attempts": 5, "mode": "standard"},
-    max_pool_connections=20
-)
-
-# S3 client (R2 compatible)
-r2 = boto3.client(
-    service_name='s3',
-    endpoint_url=R2_ENDPOINT_URL,
-    aws_access_key_id=R2_ACCESS_KEY_ID,
-    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-    region_name="auto",
-    config=BOTO_CONF
-)
+def _init_r2_runtime(force: bool = False) -> dict:
+    """Load R2 client + bucket for the current project (each site can override r2_bucket)."""
+    global _R2_RUNTIME
+    if _R2_RUNTIME and not force:
+        return _R2_RUNTIME
+    keys = a1_config.load_keys()
+    cfg = a1_config.get_r2_config(keys)
+    _R2_RUNTIME = {
+        "cfg": cfg,
+        "client": a1_config.make_r2_client(keys),
+    }
+    return _R2_RUNTIME
 
 # =============================
 # Paths
@@ -193,7 +181,11 @@ def _r2_put(image: Image.Image, key_prefix: str) -> str:
     رفع صورة إلى R2 مع retries وتفادي التجمّد.
     نستعمل put_object مباشرة (مستقرة مع R2) + إعادة تهيئة العميل عند الحاجة.
     """
-    global r2
+    rt = _init_r2_runtime()
+    cfg = rt["cfg"]
+    client = rt["client"]
+    bucket = cfg["bucket"]
+    public_base = cfg["public_base_url"]
 
     fname = f"{uuid.uuid4().hex[:11]}.png"
     key   = f"{key_prefix}/{fname}".lstrip("/")
@@ -207,26 +199,23 @@ def _r2_put(image: Image.Image, key_prefix: str) -> str:
     attempts = 5
     for attempt in range(1, attempts + 1):
         try:
-            r2.put_object(
-                Bucket=BUCKET_NAME,
+            client.put_object(
+                Bucket=bucket,
                 Key=key,
                 Body=data,
                 ContentType="image/png",
                 ContentDisposition="inline"
             )
-            return f"{R2_PUBLIC_BUCKET_URL}/{quote(key)}"
+            return f"{public_base}/{quote(key)}"
         except Exception as e:
             print(f"      ↻ R2 upload retry {attempt}/{attempts} after error: {e}", flush=True)
             if attempt == 3:
                 try:
-                    r2 = boto3.client(
-                        service_name='s3',
-                        endpoint_url=R2_ENDPOINT_URL,
-                        aws_access_key_id=R2_ACCESS_KEY_ID,
-                        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-                        region_name="auto",
-                        config=BOTO_CONF
-                    )
+                    rt = _init_r2_runtime(force=True)
+                    client = rt["client"]
+                    cfg = rt["cfg"]
+                    bucket = cfg["bucket"]
+                    public_base = cfg["public_base_url"]
                     print("      ↻ R2 client re-initialized.", flush=True)
                 except Exception as e2:
                     print(f"      ❗ R2 client re-init failed: {e2}", flush=True)
@@ -722,13 +711,25 @@ def process_batches_by_three(df, indices_all):
 # Main
 # =============================
 def main():
-    # Verify R2 connection
+    site = a1_config.get_active_site()
+    print(f"Site id         : {site.get('id', '')}", flush=True)
+    print(f"Output dir      : {a1_config.all_output_dir()}", flush=True)
+
+    # Verify R2 connection for this project's bucket
     try:
-        r2.head_bucket(Bucket=BUCKET_NAME)
+        rt = _init_r2_runtime(force=True)
+        cfg = rt["cfg"]
+        print(f"R2 bucket       : {cfg.get('bucket')}", flush=True)
+        print(f"R2 public URL   : {cfg.get('public_base_url')}", flush=True)
+        rt["client"].head_bucket(Bucket=cfg["bucket"])
         print("✅ Cloudflare R2 connection successful", flush=True)
     except Exception as e:
         print(f"❌ R2 configuration error: {e}", flush=True)
-        print("Make sure credentials/bucket/public base URL are correct.", flush=True)
+        print(
+            "Set shared R2 keys in config/shared_keys.json and per-project r2_bucket / "
+            "r2_public_base_url on each site row in config/sites.json.",
+            flush=True,
+        )
         return
 
     # Sanity checks for UseAPI

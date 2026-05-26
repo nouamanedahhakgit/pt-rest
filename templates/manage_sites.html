@@ -98,19 +98,37 @@
             <div class="col-md-3"><label class="form-label">wordpress_app_password</label><input class="form-control" type="password" name="site_{{ i }}_wordpress_app_password" value="" placeholder="blank = keep current" autocomplete="off" /><span class="small text-muted">Set new app password in WordPress, then type it here.</span></div>
           </div>
 
-          <h6 class="text-secondary">API keys (optional; empty = keep existing in file for secrets)</h6>
+          <h6 class="text-secondary">Cloudflare R2 — per project bucket</h6>
+          <p class="small text-muted mb-2">
+            Each project can use its own R2 bucket. Leave account/key fields blank to reuse
+            <code>config/shared_keys.json</code>. Set <strong>r2_bucket</strong> (and public URL) per site for separate image storage (IMAGINE / PIN IMAGE HTML).
+          </p>
+          {% set r2_eff = site.get('_r2_effective') or {} %}
+          {% if r2_eff.get('r2_bucket') %}
+          <div class="small mb-2">
+            <span class="text-muted">Effective bucket:</span>
+            <code>{{ r2_eff.r2_bucket }}</code>
+            {% if site.get('r2_bucket') %}
+            <span class="badge bg-success ms-1">custom</span>
+            {% else %}
+            <span class="badge bg-secondary ms-1">shared default</span>
+            {% endif %}
+          </div>
+          {% endif %}
+          <div class="row g-2 mb-3">
+            <div class="col-md-4"><label class="form-label">r2_bucket <span class="text-danger">*</span> per project</label><input class="form-control" name="site_{{ i }}_r2_bucket" value="{{ site.get('r2_bucket', '') }}" placeholder="{% if shared_r2_defaults.r2_bucket %}shared default: {{ shared_r2_defaults.r2_bucket }}{% else %}my-project-bucket{% endif %}" /></div>
+            <div class="col-md-8"><label class="form-label">r2_public_base_url</label><input class="form-control" name="site_{{ i }}_r2_public_base_url" value="{{ site.get('r2_public_base_url', '') }}" placeholder="{% if shared_r2_defaults.r2_public_base_url %}shared: {{ shared_r2_defaults.r2_public_base_url }}{% else %}https://pub-….r2.dev{% endif %}" /></div>
+            <div class="col-md-4"><label class="form-label">r2_account_id <span class="text-muted">(optional override)</span></label><input class="form-control" name="site_{{ i }}_r2_account_id" value="{{ site.get('r2_account_id', '') }}" placeholder="{% if shared_r2_defaults.r2_account_id %}shared: {{ shared_r2_defaults.r2_account_id[:8] }}…{% else %}from shared_keys.json{% endif %}" /></div>
+            <div class="col-md-4"><label class="form-label">r2_access_key_id <span class="text-muted">(optional override)</span></label><input class="form-control" name="site_{{ i }}_r2_access_key_id" value="{{ site.get('r2_access_key_id', '') }}" placeholder="blank = shared keys" /></div>
+            <div class="col-md-4"><label class="form-label">r2_secret_access_key <span class="text-muted">(optional override)</span></label><input class="form-control" name="site_{{ i }}_r2_secret_access_key" value="{{ site.get('r2_secret_access_key', '') }}" placeholder="blank = keep / shared" autocomplete="off" /></div>
+          </div>
+
+          <h6 class="text-secondary">Other API keys (optional; empty = keep existing in file for secrets)</h6>
           <div class="row g-2 mb-2">
             <div class="col-md-4"><label class="form-label">openai_api_key</label><input class="form-control" name="site_{{ i }}_openai_api_key" value="{{ site.get('openai_api_key', '') }}" placeholder="blank = keep" autocomplete="off" /></div>
             <div class="col-md-4"><label class="form-label">openai_model</label><input class="form-control" name="site_{{ i }}_openai_model" value="{{ site.get('openai_model', '') }}" /></div>
             <div class="col-md-4"><label class="form-label">useapi_token</label><input class="form-control" name="site_{{ i }}_useapi_token" value="{{ site.get('useapi_token', '') }}" placeholder="blank = keep" autocomplete="off" /></div>
             <div class="col-md-4"><label class="form-label">useapi_midjourney_channel</label><input class="form-control" name="site_{{ i }}_useapi_midjourney_channel" value="{{ site.get('useapi_midjourney_channel', '') }}" placeholder="blank = keep" /></div>
-          </div>
-          <div class="row g-2 mb-3">
-            <div class="col-md-4"><label class="form-label">r2_account_id</label><input class="form-control" name="site_{{ i }}_r2_account_id" value="{{ site.get('r2_account_id', '') }}" placeholder="blank = keep" /></div>
-            <div class="col-md-4"><label class="form-label">r2_access_key_id</label><input class="form-control" name="site_{{ i }}_r2_access_key_id" value="{{ site.get('r2_access_key_id', '') }}" placeholder="blank = keep" /></div>
-            <div class="col-md-4"><label class="form-label">r2_secret_access_key</label><input class="form-control" name="site_{{ i }}_r2_secret_access_key" value="{{ site.get('r2_secret_access_key', '') }}" placeholder="blank = keep" /></div>
-            <div class="col-md-4"><label class="form-label">r2_bucket</label><input class="form-control" name="site_{{ i }}_r2_bucket" value="{{ site.get('r2_bucket', '') }}" placeholder="blank = keep" /></div>
-            <div class="col-md-8"><label class="form-label">r2_public_base_url</label><input class="form-control" name="site_{{ i }}_r2_public_base_url" value="{{ site.get('r2_public_base_url', '') }}" placeholder="blank = keep" /></div>
           </div>
 
           <h6 class="text-secondary">Config flags</h6>

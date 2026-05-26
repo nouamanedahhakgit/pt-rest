@@ -88,6 +88,94 @@ def load_settings() -> Dict[str, Any]:
     return data
 
 
+_R2_KEY_NAMES = (
+    "r2_account_id",
+    "r2_access_key_id",
+    "r2_secret_access_key",
+    "r2_bucket",
+    "r2_public_base_url",
+)
+
+
+def _apply_site_credential_overrides(data: Dict[str, Any], site: Dict[str, Any]) -> None:
+    """Merge non-empty API/R2/WordPress fields from site.settings then site row (row wins)."""
+    settings = site.get("settings")
+    if isinstance(settings, dict):
+        for k in (
+            "openai_api_key",
+            "openai_model",
+            "useapi_token",
+            "useapi_midjourney_channel",
+            *_R2_KEY_NAMES,
+        ):
+            v = settings.get(k)
+            if v is not None and str(v).strip() != "":
+                data[k] = v
+    for k in (
+        "openai_api_key",
+        "openai_model",
+        "useapi_token",
+        "useapi_midjourney_channel",
+        *_R2_KEY_NAMES,
+        "wordpress_url",
+        "wordpress_user",
+        "wordpress_app_password",
+    ):
+        v = site.get(k)
+        if v is not None and str(v).strip() != "":
+            data[k] = v
+
+
+def get_r2_config(keys: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """
+    Resolved Cloudflare R2 settings for the active site (PINTEREST_SITE_ID).
+    Shared credentials can live in shared_keys.json; each site row may override
+    r2_bucket / r2_public_base_url (and optionally all R2 fields).
+    """
+    k = keys if keys is not None else load_keys()
+    account_id = str(k.get("r2_account_id") or "").strip()
+    return {
+        "account_id": account_id,
+        "access_key_id": str(k.get("r2_access_key_id") or "").strip(),
+        "secret_access_key": str(k.get("r2_secret_access_key") or "").strip(),
+        "bucket": str(k.get("r2_bucket") or "").strip(),
+        "public_base_url": str(k.get("r2_public_base_url") or "").rstrip("/"),
+        "endpoint_url": f"https://{account_id}.r2.cloudflarestorage.com" if account_id else "",
+    }
+
+
+def make_r2_client(keys: Optional[Dict[str, Any]] = None):
+    """Boto3 S3-compatible client for the active site's R2 config."""
+    import boto3
+    from botocore.config import Config
+
+    cfg = get_r2_config(keys)
+    if not cfg["account_id"] or not cfg["access_key_id"] or not cfg["secret_access_key"]:
+        raise RuntimeError(
+            "Missing R2 credentials (r2_account_id / r2_access_key_id / r2_secret_access_key). "
+            "Set in config/shared_keys.json or override on this site row in config/sites.json."
+        )
+    if not cfg["bucket"]:
+        raise RuntimeError(
+            "Missing r2_bucket for this project. Set r2_bucket on the site row in config/sites.json "
+            "(each project can use its own bucket; shared keys can stay in shared_keys.json)."
+        )
+    boto_conf = Config(
+        connect_timeout=10,
+        read_timeout=30,
+        retries={"max_attempts": 5, "mode": "standard"},
+        max_pool_connections=20,
+    )
+    return boto3.client(
+        service_name="s3",
+        endpoint_url=cfg["endpoint_url"],
+        aws_access_key_id=cfg["access_key_id"],
+        aws_secret_access_key=cfg["secret_access_key"],
+        region_name="auto",
+        config=boto_conf,
+    )
+
+
 def load_keys() -> Dict[str, Any]:
     """
     Merges config/shared_keys.json with (optional) A1-Pinterest_01/config/keys.json if that file exists.
@@ -117,26 +205,10 @@ def load_keys() -> Dict[str, Any]:
         if isinstance(v, str) and not v.strip() and shared.get(k) and str(shared.get(k, "")).strip():
             data[k] = shared[k]
 
-    # Per-site row in config/sites.json overrides shared + project (when PINTEREST_SITE_ID is set)
+    # Per-site row (+ optional settings.*) overrides shared + project (when PINTEREST_SITE_ID is set)
     site = get_active_site()
     if isinstance(site, dict):
-        for k in (
-            "openai_api_key",
-            "openai_model",
-            "useapi_token",
-            "useapi_midjourney_channel",
-            "r2_account_id",
-            "r2_access_key_id",
-            "r2_secret_access_key",
-            "r2_bucket",
-            "r2_public_base_url",
-            "wordpress_url",
-            "wordpress_user",
-            "wordpress_app_password",
-        ):
-            v = site.get(k)
-            if v is not None and str(v).strip() != "":
-                data[k] = v
+        _apply_site_credential_overrides(data, site)
 
     # --- env overrides (standard names) ---
     if os.environ.get("OPENAI_API_KEY"):
@@ -1058,6 +1130,13 @@ def keys_provenance() -> Dict[str, str]:
                 "wins over shared_keys.json and A1-…/config/keys.json"
             )
             continue
+        st = site.get("settings") if isinstance(site.get("settings"), dict) else {}
+        if _nz(st, k):
+            out[k] = (
+                f'Overridden: settings.{k} on this site row in config/sites.json  '
+                "(wins over shared_keys; site row field wins if both set)"
+            )
+            continue
         if k in API_KEYS:
             if _nz(local, k) and _v_eq(m.get(k), local.get(k)):
                 out[k] = (
@@ -1305,6 +1384,11 @@ def resolved_runtime_snapshot() -> Dict[str, Any]:
             "uses_shared_prompts_dir": use_shared_pr,
         },
         "openai_model_effective": get_openai_model(),
+        "r2_effective": {
+            "bucket": get_r2_config(k_all).get("bucket") or "",
+            "public_base_url": get_r2_config(k_all).get("public_base_url") or "",
+            "endpoint_url": get_r2_config(k_all).get("endpoint_url") or "",
+        },
         "settings_top_level_keys": sorted(st.keys(), key=str),
         "keys_merged_field_names": sorted([x for x in k_all.keys() if not str(x).startswith("_")], key=str),
         "keys_provenance": keys_provenance(),

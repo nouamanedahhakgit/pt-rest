@@ -2966,38 +2966,19 @@ def stream_all_pin_image_html():
     """
     HTML/CSS-templated pin generation. Each project picks an .html template at random
     from ALL/<out_dir>/templates-html/ for each row in Recipes.xlsx and renders it
-    with Playwright (1000x1500 JPEG). Same rotation idea as A.6-PIN IMAGES.py.
+    with Playwright (1000x1500 JPEG). Runs all configured projects in parallel.
     """
-    BATCH_SIZE = 3
-    _units = flat_run_units()
-    total = len(_units)
+    scripts_to_run = jobs_for_script("A.6b-PIN IMAGES HTML.py")
 
     @stream_with_context
     def stream():
-        done = 0
-        _units = flat_run_units()
-        total = len(_units)
-        yield f"data: 🚀 Starting Pin Image (HTML) for {total} projects (batch={BATCH_SIZE})\n\n"
+        total = len(scripts_to_run)
+        yield f"data: 🚀 Starting Pin Image (HTML) for {total} projects (all parallel)\n\n"
 
-        for i in range(0, total, BATCH_SIZE):
-            batch_u = _units[i : i + BATCH_SIZE]
-            start = i + 1
-            end = i + len(batch_u)
-
-            yield f"data: 🚀 Batch {start}-{end} / {total}\n\n"
-
-            scripts_to_run = [
-                (u["folder"], "A.6b-PIN IMAGES HTML.py", u.get("env") or {}, u["log_id"], u["label"])
-                for u in batch_u
-            ]
-
-            for line in generate_log_parallel(scripts_to_run):
-                if '"folder": "all"' in line and "Finished all processes." in line:
-                    continue
-                yield line
-
-            done += len(batch_u)
-            yield f"data: ✅ Done {done}/{total}\n\n"
+        for line in generate_log_parallel(scripts_to_run):
+            if '"folder": "all"' in line and "Finished all processes." in line:
+                continue
+            yield line
 
         yield "data: 🎉 ALL PIN IMAGE HTML DONE\n\n"
         yield 'data: {"folder":"all","line":"Finished all processes."}\n\n'
@@ -4014,6 +3995,13 @@ def manage_sites():
     settings_groups: Dict[str, List[str]] = {}
     prompt_base_by_site_id: Dict[str, Dict[str, Any]] = {}
     settings_base_by_site_id: Dict[str, Dict[str, Any]] = {}
+    r2_effective_by_site_id: Dict[str, Dict[str, str]] = {}
+    shared_keys_doc = _load_shared_keys_app()
+    shared_r2_defaults = {
+        "r2_account_id": str(shared_keys_doc.get("r2_account_id") or "").strip(),
+        "r2_bucket": str(shared_keys_doc.get("r2_bucket") or "").strip(),
+        "r2_public_base_url": str(shared_keys_doc.get("r2_public_base_url") or "").strip(),
+    }
     try:
         pipeline_folder = str(d.get("pipeline_code_folder") or "A1-Pinterest_01")
         mod = _a1_config_module_for_pipeline_folder(pipeline_folder)
@@ -4036,6 +4024,12 @@ def manage_sites():
                             snap = mod.resolved_runtime_snapshot()
                         except Exception:
                             continue
+                        r2_eff = (snap or {}).get("r2_effective")
+                        if isinstance(r2_eff, dict):
+                            r2_effective_by_site_id[sid] = {
+                                "r2_bucket": str(r2_eff.get("r2_bucket") or "").strip(),
+                                "r2_public_base_url": str(r2_eff.get("r2_public_base_url") or "").strip(),
+                            }
                         base = (snap or {}).get("prompts_excluding_row_inline_by_path")
                         if isinstance(base, dict):
                             prompt_base_by_site_id[sid] = base
@@ -4167,6 +4161,8 @@ def manage_sites():
         sv["_prompt_placeholders"] = prompt_placeholders
         sv["_settings_values"] = settings_values
         sv["_settings_placeholders"] = settings_placeholders
+        sid = str(sv.get("id", "") or "").strip()
+        sv["_r2_effective"] = r2_effective_by_site_id.get(sid, {})
         sites_view.append(sv)
 
     if settings_schema:
@@ -4207,6 +4203,7 @@ def manage_sites():
         prompt_schema=prompt_schema,
         settings_schema=settings_schema,
         settings_groups=settings_groups,
+        shared_r2_defaults=shared_r2_defaults,
     )
 
 
