@@ -217,6 +217,10 @@ def main() -> int:
     keys     = a1_config.load_keys()
     a1_config.set_openai_key_from_keys(keys)
 
+    site = a1_config.get_active_site()
+    print(f"Site id       : {site.get('id', '')}")
+    print(f"Output dir    : {a1_config.all_output_dir()}")
+
     templates_dir = Path(a1_config.resolve_html_templates_dir())
     output_dir    = a1_config.all_output_join("output_images")
     os.makedirs(output_dir, exist_ok=True)

@@ -87,6 +87,20 @@ def _subprocess_env(env_extra=None):
     return env
 
 
+def _job_subprocess_env(base_env: Optional[dict], job_env: Optional[dict]) -> dict:
+    """
+    Build subprocess env for one dashboard project job.
+    Strip parent Flask site vars first so global parallel runs cannot inherit
+    the wrong PINTEREST_SITE_ID / PINTEREST_OUT_DIR from the server process.
+    """
+    env = _subprocess_env(base_env)
+    for key in ("PINTEREST_SITE_ID", "PINTEREST_OUT_DIR"):
+        env.pop(key, None)
+    if job_env:
+        env.update(job_env)
+    return env
+
+
 # Child scripts log UTF-8 (emoji, etc.); Windows defaults to cp1252 → UnicodeDecodeError on the pipe.
 _SUBPROCESS_STDOUT_KWARGS = {
     "stdout": subprocess.PIPE,
@@ -382,12 +396,13 @@ def flat_run_units() -> list:
             continue
         title = _site_row_public_title(s)
         log_id = (str(s.get("log_id", "")).strip() or _safe_log_dom_id(title) or _safe_log_dom_id(sid))
+        out_dir = str(s.get("out_dir", "") or f"{sid}-out").strip()
         out.append(
             {
                 "folder": root,
                 "label": title,
                 "log_id": log_id,
-                "env": {"PINTEREST_SITE_ID": sid},
+                "env": {"PINTEREST_SITE_ID": sid, "PINTEREST_OUT_DIR": out_dir},
             }
         )
     return out
@@ -1674,6 +1689,22 @@ def _ensure_project_output_files_for_sites(doc: Optional[dict] = None) -> None:
                     except OSError:
                         pass
 
+        # A.6b HTML pins: each project keeps its own ALL/<out>/templates-html/
+        html_target = os.path.join(target_dir, "templates-html")
+        os.makedirs(html_target, exist_ok=True)
+        html_src = os.path.join(pipeline_root, "templates-html")
+        if os.path.isdir(html_src):
+            for nm in os.listdir(html_src):
+                if not nm.lower().endswith(".html"):
+                    continue
+                src = os.path.join(html_src, nm)
+                dst = os.path.join(html_target, nm)
+                if os.path.isfile(src) and not os.path.exists(dst):
+                    try:
+                        shutil.copy2(src, dst)
+                    except OSError:
+                        pass
+
 
 def _next_default_site_id(sites: list) -> str:
     nmax = 0
@@ -2284,7 +2315,7 @@ def generate_log_parallel(script_names, env_extra=None):
                 }
             )
             return
-        be = {**base_env, **(job_env or {})}
+        be = _job_subprocess_env(base_env, job_env)
         q.put({"folder": log_id, "line": f"Running {line_label}/{script}..."})
         proc = _popen_pipeline_script(folder_abs, script, be)
 
@@ -2333,7 +2364,7 @@ def generate_log_sequential(script_names, env_extra=None, delay_between_jobs_s: 
             ) + "\n\n"
             continue
 
-        be = {**base_env, **(job_env or {})}
+        be = _job_subprocess_env(base_env, job_env)
         yield "data: " + json.dumps(
             {"folder": log_id, "line": f"Running {line_label}/{script}... [{idx}/{len(jobs)}]"}
         ) + "\n\n"
@@ -2392,7 +2423,7 @@ def generate_log_imagine_all_grouped(env_extra=None):
         for unit in units:
             script = "A.3-IMAGINE.py"
             folder = unit["folder"]
-            job_env = {**base_env, **(unit.get("env") or {})}
+            job_env = _job_subprocess_env(base_env, unit.get("env") or {})
             line_label = unit.get("label", folder)
             log_id = unit.get("log_id", _safe_log_dom_id(line_label))
             folder_abs = os.path.join(os.getcwd(), folder)
@@ -2467,7 +2498,7 @@ def generate_log_pool(script_names, max_concurrency=10, env_extra=None):
                 }
             )
         else:
-            be = {**base_env, **(job_env or {})}
+            be = _job_subprocess_env(base_env, job_env)
             q.put({"folder": log_id, "line": f"Running {line_label}/{script}..."})
             proc = _popen_pipeline_script(folder_abs, script, be)
 
@@ -2541,7 +2572,7 @@ def generate_log_in_batches(script_names, batch_size=3, env_extra=None):
             )
             return
 
-        be = {**base_env, **(job_env or {})}
+        be = _job_subprocess_env(base_env, job_env)
         q.put({"folder": log_id, "line": f"Running {line_label}/{script}..."})
         proc = _popen_pipeline_script(folder_abs, script, be)
         # stream output
@@ -2667,7 +2698,7 @@ def generate_log_sequential_with_delay(script_names, delay_s=120, env_extra=None
             "line": f"Running {line_label}/{script}..."
         }) + "\n\n"
 
-        be = {**base_env, **(job_env or {})}
+        be = _job_subprocess_env(base_env, job_env)
         proc = _popen_pipeline_script(folder_abs, script, be)
         running_processes.append(proc)
 
@@ -2944,7 +2975,9 @@ def stream_all_pin_image_html():
     @stream_with_context
     def stream():
         done = 0
-        yield f"data: 🚀 Starting Pin Image (HTML) for {total} folders (batch={BATCH_SIZE})\n\n"
+        _units = flat_run_units()
+        total = len(_units)
+        yield f"data: 🚀 Starting Pin Image (HTML) for {total} projects (batch={BATCH_SIZE})\n\n"
 
         for i in range(0, total, BATCH_SIZE):
             batch_u = _units[i : i + BATCH_SIZE]
@@ -6328,109 +6361,7 @@ def index():
 
         document.addEventListener("DOMContentLoaded", function() {{
           applyStepButtonTooltips();
-          let previewForm = document.getElementById("previewForm");
-          let previewResult = document.getElementById("previewResult");
-          let finalResult = document.getElementById("finalResult");
-          let titlesArea = document.getElementById("titles");
-          let titleCount = document.getElementById("titleCount");
-          let confirmBtn = document.getElementById("confirmBtn");
-
-          if(titlesArea) {{
-            titlesArea.addEventListener("input", function() {{
-              let lines = titlesArea.value.split(/\\r?\\n/).filter(l => l.trim() !== "");
-              let total = lines.length;
-              titleCount.innerText = total + " titles";
-            }});
-          }}
-
-          if(previewForm) {{
-            previewForm.addEventListener("submit", function(e) {{
-              e.preventDefault();
-              previewResult.innerHTML = "Loading preview...";
-              finalResult.innerHTML = "";
-
-              let formData = new FormData(previewForm);
-              formData.set("preview_only", "1");
-
-              fetch("/upload_titles", {{
-                method: "POST",
-                body: formData
-              }})
-              .then(r => r.json())
-              .then(data => {{
-                if(data.status === "preview") {{
-                  const arr = data.filtered_titles;
-                  let html = "<table class='table' id='previewTable'><tbody>";
-                  for(let i=0; i < arr.length; i++) {{
-                    html += "<tr><td>" + arr[i] + "</td>"
-                         + "<td><button class='btn btn-sm btn-danger' onclick='removeRow(this)'>Delete</button></td></tr>";
-                  }}
-                  html += "</tbody></table>";
-
-                  previewResult.innerHTML = html;
-                  confirmBtn.style.display = "inline-block";
-                }} else {{
-                  previewResult.innerHTML = "<span style='color:red'>" + data.message + "</span>";
-                  confirmBtn.style.display = "none";
-                }}
-              }})
-              .catch(err => {{
-                previewResult.innerHTML = "<span style='color:red'>Error: " + err + "</span>";
-                confirmBtn.style.display = "none";
-              }});
-            }});
-          }}
-
-          if(confirmBtn) {{
-            confirmBtn.addEventListener("click", function() {{
-              finalResult.innerHTML = "Uploading to XLSX...";
-              let table = document.getElementById("previewTable");
-              if(!table) {{
-                finalResult.innerHTML = "<span style='color:red'>No preview table found.</span>";
-                return;
-              }}
-              let rows = table.querySelectorAll("tr");
-              let finalTitles = [];
-              rows.forEach(r => {{
-                let cell = r.querySelector("td");
-                if(cell && cell.innerText.trim() !== "") {{
-                  finalTitles.push(cell.innerText.trim());
-                }}
-              }});
-              if(finalTitles.length===0) {{
-                finalResult.innerHTML = "<span style='color:red'>No titles to upload.</span>";
-                return;
-              }}
-
-              let formData = new FormData();
-              formData.set("preview_only","0");
-              formData.set("final_titles", JSON.stringify(finalTitles));
-
-              fetch("/upload_titles", {{
-                method: "POST",
-                body: formData
-              }})
-              .then(r => r.json())
-              .then(data => {{
-                if(data.status==="success") {{
-                  finalResult.innerHTML = "<span style='color:green'>" + data.message + "</span>"
-                    + "<br>Total: " + data.total
-                    + "<br>File distribution: " + JSON.stringify(data.counts);
-                }} else {{
-                  finalResult.innerHTML = "<span style='color:red'>" + data.message + "</span>";
-                }}
-              }})
-              .catch(err => {{
-                finalResult.innerHTML = "<span style='color:red'>Error: " + err + "</span>";
-              }});
-            }});
-          }}
         }});
-
-        function removeRow(btn) {{
-          let tr = btn.closest("tr");
-          if(tr) tr.remove();
-        }}
 
         var projectStreams = {{}};
         function startProjectAction(logId, projectLabel, action, btn) {{
@@ -7187,23 +7118,6 @@ def index():
       </div>
 
       <div class="materio-content">
-        <div class="card mb-4">
-          <div class="card-header">
-            <strong>Bulk Recipe Titles - Preview & Review</strong>
-          </div>
-          <div class="card-body">
-            <form id="previewForm" action="/upload_titles" method="post">
-              <label for="titles" class="form-label">Enter Titles (one per line)</label>
-              <textarea id="titles" name="titles" class="form-control mb-2" rows="3"></textarea>
-              <div id="titleCount" class="text-muted mb-2">0 titles</div>
-              <button class="btn btn-primary" type="submit">Preview</button>
-            </form>
-            <div id="previewResult" class="mt-3"></div>
-            <button class="btn btn-success mt-3" id="confirmBtn" style="display:none;">Confirm & Upload</button>
-            <div id="finalResult" class="mt-3"></div>
-          </div>
-        </div>
-
         <div class="card mb-4">
           <div class="card-header">
             <strong>Actions</strong>

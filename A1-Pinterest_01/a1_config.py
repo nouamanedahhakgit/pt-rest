@@ -579,6 +579,9 @@ def get_active_site() -> Dict[str, Any]:
                 continue
             if sid and str(s.get("id", "")).strip() == sid:
                 d = dict(s)
+                env_out = (os.environ.get("PINTEREST_OUT_DIR") or "").strip()
+                if env_out:
+                    d["out_dir"] = env_out
                 d.setdefault("out_dir", (d.get("out_dir") or f"{d.get('id', 'out')}-out").strip())
                 return d
         s0 = dict(sites[0])
@@ -633,31 +636,73 @@ def resolve_templates_dir() -> str:
     return str(target)
 
 
+def _dir_has_html_files(path: Path) -> bool:
+    return path.is_dir() and any(path.glob("*.html"))
+
+
+def _seed_html_templates_from_pipeline(target: Path) -> None:
+    """Copy missing *.html from pipeline templates-html into a project folder only."""
+    target.mkdir(parents=True, exist_ok=True)
+    src = (A1_DIR / "templates-html").resolve()
+    if not src.is_dir():
+        return
+    for p in src.iterdir():
+        if p.is_file() and p.suffix.lower() == ".html":
+            dst = target / p.name
+            if not dst.exists():
+                try:
+                    shutil.copy2(str(p), str(dst))
+                except OSError:
+                    pass
+
+
 def resolve_html_templates_dir() -> str:
     """
     Per-project HTML pin templates folder (used by A.6b-PIN IMAGES HTML.py).
-    Default: ALL/<out_dir>/templates-html
-    Optional site override: html_templates_dir (folder name only, kept inside ALL/<out_dir>).
-    Seed missing files from A1-Pinterest_01/templates-html.
+
+    Always resolves under ALL/<active site out_dir>/ — never the shared pipeline folder
+    except to seed missing files on first run.
+
+    Picks the first existing project subfolder that contains *.html:
+      1. site html_templates_dir
+      2. site templates_dir (e.g. templates-html or templates with .html files)
+      3. templates-html
+      4. templates (if it contains .html)
+
+    If none exist yet, creates templates-html (or html_templates_dir) and seeds
+    missing files from A1-Pinterest_01/templates-html.
     """
     site = get_active_site()
     out_dir = Path(all_output_dir())
     out_dir.mkdir(parents=True, exist_ok=True)
-    sub = str((site or {}).get("html_templates_dir", "") or "").strip() or "templates-html"
-    sub = Path(sub).name or "templates-html"
-    target = (out_dir / sub).resolve()
-    target.mkdir(parents=True, exist_ok=True)
 
-    src = (A1_DIR / "templates-html").resolve()
-    if src.is_dir():
-        for p in src.iterdir():
-            if p.is_file():
-                dst = target / p.name
-                if not dst.exists():
-                    try:
-                        shutil.copy2(str(p), str(dst))
-                    except OSError:
-                        pass
+    html_sub = str((site or {}).get("html_templates_dir", "") or "").strip()
+    tpl_sub = str((site or {}).get("templates_dir", "") or "").strip()
+
+    candidates: List[str] = []
+    if html_sub:
+        candidates.append(Path(html_sub).name)
+    if tpl_sub:
+        name = Path(tpl_sub).name
+        if name not in candidates:
+            candidates.append(name)
+    for fallback in ("templates-html", "templates"):
+        if fallback not in candidates:
+            candidates.append(fallback)
+
+    for sub in candidates:
+        target = (out_dir / sub).resolve()
+        if _dir_has_html_files(target):
+            return str(target)
+
+    if html_sub:
+        sub = Path(html_sub).name
+    elif tpl_sub in ("templates-html", "templates_html"):
+        sub = Path(tpl_sub).name
+    else:
+        sub = "templates-html"
+    target = (out_dir / sub).resolve()
+    _seed_html_templates_from_pipeline(target)
     return str(target)
 
 
