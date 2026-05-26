@@ -282,21 +282,44 @@ def _mapping_category_names(site_row: dict) -> List[str]:
     return list(mapping.keys()) if mapping else []
 
 
+def _article_body_from_row(row) -> tuple:
+    """
+    Markdown body for CF static pages.
+    Prefer full blog `article`; fall back to `Recipe` (+ optional pinterest_description intro).
+    Returns (body_md, source) where source is 'article', 'recipe', or ''.
+    """
+    art = str(row.get("article", "") or "").strip()
+    if art and art.lower() != "nan":
+        return art, "article"
+    recipe = str(row.get("Recipe", "") or "").strip()
+    if recipe and recipe.lower() != "nan":
+        parts = []
+        desc = str(row.get("pinterest_description", "") or "").strip()
+        if desc and desc.lower() != "nan":
+            parts.append(desc)
+        parts.append(recipe)
+        return "\n\n".join(parts), "recipe"
+    return "", ""
+
+
 def _build_articles_data(df: pd.DataFrame, project_out_dir: str, build_dir: str, site_row: dict) -> tuple:
     resolve_cat = _build_category_resolver(site_row)
     articles: List[Dict[str, Any]] = []
     used_slugs: Dict[str, int] = {}
     skip_no_title = 0
-    skip_no_article = 0
+    skip_no_body = 0
+    used_recipe_fallback = 0
     for idx, row in df.iterrows():
         title = str(row.get("Title", "") or "").strip()
-        if not title:
+        if not title or title.lower() == "nan":
             skip_no_title += 1
             continue
-        body_md = str(row.get("article", "") or "")
+        body_md, body_src = _article_body_from_row(row)
         if not body_md.strip():
-            skip_no_article += 1
+            skip_no_body += 1
             continue
+        if body_src == "recipe":
+            used_recipe_fallback += 1
         slug = _slugify(title)
         if slug in used_slugs:
             used_slugs[slug] += 1
@@ -325,7 +348,7 @@ def _build_articles_data(df: pd.DataFrame, project_out_dir: str, build_dir: str,
                 "instructions": instructions,
             }
         )
-    return articles, skip_no_title, skip_no_article
+    return articles, skip_no_title, skip_no_body, used_recipe_fallback
 
 
 def _pick_related(articles: List[Dict[str, Any]], current: Dict[str, Any], n: int = 3) -> List[Dict[str, Any]]:
@@ -425,19 +448,23 @@ def render_theme(
 
     df = pd.read_excel(recipes_path)
     log.info(f"Loaded {len(df)} rows from {recipes_path}")
-    articles, skip_no_title, skip_no_article = _build_articles_data(df, project_out_dir, build_dir, site_row)
+    articles, skip_no_title, skip_no_body, used_recipe_fallback = _build_articles_data(df, project_out_dir, build_dir, site_row)
     log.info(f"Rendering {len(articles)} articles")
     if skip_no_title:
         log.info(f"  Skipped {skip_no_title} row(s): missing Title")
-    if skip_no_article:
+    if skip_no_body:
         log.warning(
-            f"  Skipped {skip_no_article} row(s): missing `article` column — "
-            "run ARTICLE (A.4-ARTICLES.py) first, then CF UPLOAD again."
+            f"  Skipped {skip_no_body} row(s): no `article` or `Recipe` text to publish."
+        )
+    if used_recipe_fallback:
+        log.warning(
+            f"  {used_recipe_fallback} page(s) built from `Recipe` only — "
+            "run ARTICLE (A.4-ARTICLES.py) for full blog posts."
         )
     if len(df) > 0 and not articles:
-        log.warning(
-            "No recipes will appear on the site until Recipes.xlsx has Title + article filled. "
-            "PIN DATA alone does not create article pages."
+        log.error(
+            "No recipes will appear on the site: Recipes.xlsx needs Title plus either "
+            "`article` (ARTICLE step) or `Recipe` (START step)."
         )
 
     categories: List[str] = []
@@ -772,6 +799,13 @@ def main() -> int:
         return 10
 
     log.info(f"✓ Rendered {n_articles} articles into {build_dir}")
+    if n_articles <= 0:
+        log.error(
+            "Deploy aborted: nothing to publish. Run ARTICLE (A.4) to fill the `article` column, "
+            "or ensure `Recipe` has text from START, then CF UPLOAD again."
+        )
+        return 11
+
     log.info("→ Deploying to Cloudflare Pages via wrangler …")
 
     try:

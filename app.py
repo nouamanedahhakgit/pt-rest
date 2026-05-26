@@ -6174,7 +6174,8 @@ def index():
           "/stream-all-pin-image": ["PIN DATA"],
           "/stream-all-pin-image-html": ["PIN DATA"],
           "/stream-all-wp-upload": ["ARTICLE", "PIN DATA", "PIN IMAGE"],
-          "/stream-all-pin-bulk": ["PIN DATA"]
+          "/stream-all-pin-bulk": ["PIN DATA"],
+          "/stream-all-cf-upload": ["ARTICLE"]
         }};
 
         function _columnsByStep(cols) {{
