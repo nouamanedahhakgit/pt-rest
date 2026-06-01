@@ -9,8 +9,6 @@ import openai
 # إضافات خاصة بـ Cloudflare R2
 import requests
 import uuid
-import boto3
-from botocore.config import Config
 from urllib.parse import quote
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -18,75 +16,59 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 import a1_config  # noqa: E402
 
+# ----------------------------
+# R2 — disposable temp bucket (auto-deleted by Cloudflare lifecycle)
+# ----------------------------
 _K8 = a1_config.load_keys()
 _S8 = a1_config.load_settings()
 _PP8 = a1_config.load_prompts("a8_pin_bulk")
 
-# ----------------------------
-# Configuration Section (R2: config/keys.json)
-# ----------------------------
 
-CLOUDFLARE_ACCOUNT_ID = str(_K8.get("r2_account_id", ""))
-R2_ACCESS_KEY_ID = str(_K8.get("r2_access_key_id", ""))
-R2_SECRET_ACCESS_KEY = str(_K8.get("r2_secret_access_key", ""))
-BUCKET_NAME = str(_K8.get("r2_bucket", ""))
-R2_PUBLIC_BUCKET_URL = str(_K8.get("r2_public_base_url", ""))
+def _disposable_r2_runtime(force: bool = False) -> dict:
+    keys = a1_config.load_keys()
+    cfg = a1_config.get_r2_disposable_config(keys)
+    return {
+        "cfg": cfg,
+        "client": a1_config.make_r2_client(keys, disposable=True),
+    }
 
-R2_ENDPOINT_URL = f"https://{CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
-
-BOTO_CONF = Config(
-    connect_timeout=10,
-    read_timeout=30,
-    retries={"max_attempts": 5, "mode": "standard"},
-    max_pool_connections=20
-)
-
-r2 = boto3.client(
-    service_name='s3',
-    endpoint_url=R2_ENDPOINT_URL,
-    aws_access_key_id=R2_ACCESS_KEY_ID,
-    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-    region_name="auto",
-    config=BOTO_CONF
-)
 
 def _r2_put_bytes(data: bytes, key_prefix: str = "pinterest_images") -> str:
-    """
-    رفع bytes إلى Cloudflare R2 مع retries بسيطة،
-    وترجيع رابط عمومي من R2_PUBLIC_BUCKET_URL.
-    """
-    global r2
+    """Upload pin JPEG to shared disposable R2 (auto-cleared after lifecycle days)."""
+    rt = _disposable_r2_runtime()
+    cfg = rt["cfg"]
+    client = rt["client"]
+    bucket = cfg["bucket"]
+    public_base = cfg["public_base_url"]
 
+    site = a1_config.get_active_site()
+    site_tag = str((site or {}).get("id") or "site").strip().lower()
     fname = f"{uuid.uuid4().hex[:11]}.jpg"
-    key = f"{key_prefix}/{fname}".lstrip("/")
+    key = f"{site_tag}/{key_prefix}/{fname}".lstrip("/")
 
     attempts = 5
     for attempt in range(1, attempts + 1):
         try:
-            r2.put_object(
-                Bucket=BUCKET_NAME,
+            client.put_object(
+                Bucket=bucket,
                 Key=key,
                 Body=data,
                 ContentType="image/jpeg",
-                ContentDisposition="inline"
+                ContentDisposition="inline",
             )
-            return f"{R2_PUBLIC_BUCKET_URL}/{quote(key)}"
+            return f"{public_base}/{quote(key)}"
         except Exception as e:
-            print(f"      ↻ R2 upload retry {attempt}/{attempts} after error: {e}")
-            # إعادة تهيئة العميل فالمحاولة الثالثة بحال سكريبت 2
+            print(f"      ↻ R2 disposable upload retry {attempt}/{attempts} after error: {e}")
             if attempt == 3:
                 try:
-                    r2 = boto3.client(
-                        service_name='s3',
-                        endpoint_url=R2_ENDPOINT_URL,
-                        aws_access_key_id=R2_ACCESS_KEY_ID,
-                        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-                        region_name="auto",
-                        config=BOTO_CONF
-                    )
-                    print("      ↻ R2 client re-initialized.")
+                    rt = _disposable_r2_runtime(force=True)
+                    client = rt["client"]
+                    cfg = rt["cfg"]
+                    bucket = cfg["bucket"]
+                    public_base = cfg["public_base_url"]
+                    print("      ↻ R2 disposable client re-initialized.")
                 except Exception as e2:
-                    print(f"      ❗ R2 client re-init failed: {e2}")
+                    print(f"      ❗ R2 disposable client re-init failed: {e2}")
             if attempt < attempts:
                 import time
                 time.sleep(1.2 * attempt)

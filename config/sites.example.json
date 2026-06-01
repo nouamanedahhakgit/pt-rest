@@ -7,7 +7,9 @@
       "out_dir": "A1-Pinterest_01-out",
       "wordpress_url": "https://your-site-1.example",
       "wordpress_user": "wp-user-1",
-      "wordpress_app_password": "xxxx xxxx xxxx xxxx xxxx xxxx"
+      "wordpress_app_password": "xxxx xxxx xxxx xxxx xxxx xxxx",
+      "r2_bucket": "p01-images",
+      "r2_public_base_url": "https://pub-xxxx.r2.dev"
     },
     {
       "id": "p02",

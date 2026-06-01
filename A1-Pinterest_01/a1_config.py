@@ -94,6 +94,8 @@ _R2_KEY_NAMES = (
     "r2_secret_access_key",
     "r2_bucket",
     "r2_public_base_url",
+    "r2_disposable_bucket",
+    "r2_disposable_public_base_url",
 )
 
 
@@ -131,6 +133,7 @@ def get_r2_config(keys: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     Resolved Cloudflare R2 settings for the active site (PINTEREST_SITE_ID).
     Shared credentials can live in shared_keys.json; each site row may override
     r2_bucket / r2_public_base_url (and optionally all R2 fields).
+    This is the *permanent* bucket (WordPress / live site images).
     """
     k = keys if keys is not None else load_keys()
     account_id = str(k.get("r2_account_id") or "").strip()
@@ -144,22 +147,37 @@ def get_r2_config(keys: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     }
 
 
-def make_r2_client(keys: Optional[Dict[str, Any]] = None):
-    """Boto3 S3-compatible client for the active site's R2 config."""
+def get_r2_disposable_config(keys: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """
+    Shared temporary R2 bucket for disposable images (grids, extra splits, Pinterest pins).
+    Auto-cleared by Cloudflare lifecycle (see r2_disposable_auto_delete_days in shared_keys.json).
+    """
+    k = keys if keys is not None else load_keys()
+    account_id = str(k.get("r2_account_id") or "").strip()
+    bucket = str(k.get("r2_disposable_bucket") or "pinterest-disposable").strip()
+    public = str(k.get("r2_disposable_public_base_url") or "").strip().rstrip("/")
+    return {
+        "account_id": account_id,
+        "access_key_id": str(k.get("r2_access_key_id") or "").strip(),
+        "secret_access_key": str(k.get("r2_secret_access_key") or "").strip(),
+        "bucket": bucket,
+        "public_base_url": public,
+        "endpoint_url": f"https://{account_id}.r2.cloudflarestorage.com" if account_id else "",
+    }
+
+
+def make_r2_client_for_config(cfg: Dict[str, str]):
+    """Boto3 S3-compatible client for an explicit R2 cfg dict (bucket + credentials)."""
     import boto3
     from botocore.config import Config
 
-    cfg = get_r2_config(keys)
-    if not cfg["account_id"] or not cfg["access_key_id"] or not cfg["secret_access_key"]:
+    if not cfg.get("account_id") or not cfg.get("access_key_id") or not cfg.get("secret_access_key"):
         raise RuntimeError(
             "Missing R2 credentials (r2_account_id / r2_access_key_id / r2_secret_access_key). "
-            "Set in config/shared_keys.json or override on this site row in config/sites.json."
+            "Set in config/shared_keys.json."
         )
-    if not cfg["bucket"]:
-        raise RuntimeError(
-            "Missing r2_bucket for this project. Set r2_bucket on the site row in config/sites.json "
-            "(each project can use its own bucket; shared keys can stay in shared_keys.json)."
-        )
+    if not cfg.get("bucket"):
+        raise RuntimeError("Missing R2 bucket name in config.")
     boto_conf = Config(
         connect_timeout=10,
         read_timeout=30,
@@ -174,6 +192,13 @@ def make_r2_client(keys: Optional[Dict[str, Any]] = None):
         region_name="auto",
         config=boto_conf,
     )
+
+
+def make_r2_client(keys: Optional[Dict[str, Any]] = None, *, disposable: bool = False):
+    """Boto3 S3-compatible client for permanent (default) or disposable R2 bucket."""
+    if disposable:
+        return make_r2_client_for_config(get_r2_disposable_config(keys))
+    return make_r2_client_for_config(get_r2_config(keys))
 
 
 def load_keys() -> Dict[str, Any]:
@@ -200,6 +225,8 @@ def load_keys() -> Dict[str, Any]:
         "r2_secret_access_key",
         "r2_bucket",
         "r2_public_base_url",
+        "r2_disposable_bucket",
+        "r2_disposable_public_base_url",
     ):
         v = data.get(k)
         if isinstance(v, str) and not v.strip() and shared.get(k) and str(shared.get(k, "")).strip():
@@ -1388,6 +1415,10 @@ def resolved_runtime_snapshot() -> Dict[str, Any]:
             "bucket": get_r2_config(k_all).get("bucket") or "",
             "public_base_url": get_r2_config(k_all).get("public_base_url") or "",
             "endpoint_url": get_r2_config(k_all).get("endpoint_url") or "",
+        },
+        "r2_disposable_effective": {
+            "bucket": get_r2_disposable_config(k_all).get("bucket") or "",
+            "public_base_url": get_r2_disposable_config(k_all).get("public_base_url") or "",
         },
         "settings_top_level_keys": sorted(st.keys(), key=str),
         "keys_merged_field_names": sorted([x for x in k_all.keys() if not str(x).startswith("_")], key=str),

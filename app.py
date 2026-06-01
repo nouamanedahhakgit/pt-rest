@@ -1705,6 +1705,11 @@ def _ensure_project_output_files_for_sites(doc: Optional[dict] = None) -> None:
                     except OSError:
                         pass
 
+    try:
+        doc = _apply_r2_provisioning_if_needed(d if isinstance(d, dict) else _load_sites_file_app())
+    except Exception:
+        pass
+
 
 def _next_default_site_id(sites: list) -> str:
     nmax = 0
@@ -3428,6 +3433,114 @@ def _load_shared_keys_app() -> dict:
         return {}
 
 
+def _write_shared_keys_app(doc: dict) -> None:
+    path = os.path.join(_APP_CONFIG, "shared_keys.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def _apply_r2_provisioning_if_needed(doc: dict, *, force: bool = False) -> dict:
+    """
+    Auto-create:
+      - one shared disposable R2 bucket (auto-delete after N days)
+      - one permanent R2 bucket per site (image_1 / image_ing_1)
+    Writes bucket names + public URLs back to shared_keys.json and sites.json.
+    """
+    try:
+        import r2_provisioning as rp
+    except ImportError:
+        return doc
+    if not isinstance(doc, dict):
+        return doc
+    shared = _load_shared_keys_app()
+    if shared.get("r2_auto_provision_buckets") is False:
+        return doc
+    creds = rp.cf_credentials_from_shared(shared)
+    if not creds.get("token") or not creds.get("account_id"):
+        return doc
+    sites = doc.get("sites")
+    if not isinstance(sites, list):
+        return doc
+    needs = bool(force)
+    if not needs:
+        if not str(shared.get("r2_disposable_public_base_url") or "").strip():
+            needs = True
+        for s in sites:
+            if not isinstance(s, dict):
+                continue
+            if not str(s.get("r2_bucket") or "").strip() or not str(
+                s.get("r2_public_base_url") or ""
+            ).strip():
+                needs = True
+                break
+    if not needs:
+        return doc
+    result = rp.provision_all_sites(sites, shared, force_public=force)
+    shared_changed = False
+    for k, v in (result.get("shared_updates") or {}).items():
+        if v and str(shared.get(k) or "") != str(v):
+            shared[k] = v
+            shared_changed = True
+    if not shared.get("r2_disposable_auto_delete_days"):
+        shared["r2_disposable_auto_delete_days"] = rp.DEFAULT_AUTO_DELETE_DAYS
+        shared_changed = True
+    if not shared.get("r2_disposable_bucket"):
+        shared["r2_disposable_bucket"] = rp.DEFAULT_DISPOSABLE_BUCKET
+        shared_changed = True
+    if shared_changed:
+        _write_shared_keys_app(shared)
+    sites_changed = False
+    for row in result.get("sites") or []:
+        if not isinstance(row, dict):
+            continue
+        updates = row.get("site_updates") or {}
+        if not updates:
+            continue
+        sid = str(row.get("site_id") or "").strip()
+        for s in sites:
+            if not isinstance(s, dict):
+                continue
+            if str(s.get("id") or "").strip() != sid:
+                continue
+            for k, v in updates.items():
+                if v and str(s.get(k) or "") != str(v):
+                    s[k] = v
+                    sites_changed = True
+    if sites_changed:
+        doc = dict(doc)
+        doc["sites"] = sites
+        _write_sites_doc(doc)
+    return doc
+
+
+@app.route("/api/r2/provision-all", methods=["POST"])
+def api_r2_provision_all():
+    """Create/update disposable + per-site permanent R2 buckets via Cloudflare API."""
+    doc = _load_sites_file_app()
+    doc = _apply_r2_provisioning_if_needed(doc, force=True)
+    shared = _load_shared_keys_app()
+    return jsonify(
+        {
+            "ok": True,
+            "disposable_bucket": shared.get("r2_disposable_bucket"),
+            "disposable_public_base_url": shared.get("r2_disposable_public_base_url"),
+            "disposable_auto_delete_days": shared.get("r2_disposable_auto_delete_days"),
+            "sites": [
+                {
+                    "id": s.get("id"),
+                    "r2_bucket": s.get("r2_bucket"),
+                    "r2_public_base_url": s.get("r2_public_base_url"),
+                }
+                for s in (doc.get("sites") or [])
+                if isinstance(s, dict)
+            ],
+        }
+    )
+
+
 def _resolve_cf_creds_for_project(project: str) -> dict:
     """Returns { token, account_id, project_name, errors[] } for the given project label."""
     out = {"token": "", "account_id": "", "project_name": "", "errors": []}
@@ -3707,19 +3820,21 @@ _STEP_ACTION_TOOLTIPS: Dict[str, Dict[str, str]] = {
     },
     "CLEANUP R2": {
         "run": (
-            "Deletes unused images from Cloudflare R2 — permanent.\n\n"
-            "Removes:\n"
-            "• Extra Midjourney splits/grids (image_2–4, unused grids)\n"
-            "• Old pinterest_local / pinterest_remote copies not referenced in Excel\n\n"
-            "Keeps:\n"
-            "• Every URL still in Recipes.xlsx or Pin_01.xlsx "
-            "(image_1, image_ing_1, Picture Url 1, etc.)\n\n"
-            "You must type DELETE R2 to confirm.\n"
-            "Best after: pins uploaded to Pinterest and site looks correct."
+            "Deletes unreferenced images from *permanent* site R2 buckets only.\n\n"
+            "The shared disposable bucket (pins, extra splits, grids) is auto-cleared by "
+            "Cloudflare lifecycle after N days — no manual action needed.\n\n"
+            "Requires typing DELETE R2 to confirm."
         ),
-        "clear": (
-            "Deletes unreferenced R2 objects. URLs in Recipes.xlsx / Pin_01.xlsx are kept."
+        "clear": "Deletes unreferenced objects from permanent site buckets only.",
+    },
+    "SETUP R2 BUCKETS": {
+        "run": (
+            "Creates Cloudflare R2 buckets automatically:\n"
+            "• One disposable bucket (shared) — temp images, auto-delete after 7 days\n"
+            "• One permanent bucket per site — image_1 + image_ing_1 for WordPress\n\n"
+            "Saves bucket names and public URLs to shared_keys.json + sites.json."
         ),
+        "clear": "Provision R2 buckets via Cloudflare API.",
     },
 }
 
@@ -6398,6 +6513,31 @@ def index():
           }}
         }}
 
+        async function setupR2Buckets() {{
+          var msg = "Setup R2 buckets?\\n\\n";
+          msg += "• Creates shared disposable bucket (auto-delete after 7 days)\\n";
+          msg += "• Creates one permanent bucket per site (WordPress images)\\n";
+          msg += "• Updates shared_keys.json and sites.json with public URLs\\n\\n";
+          msg += "Requires cloudflare_api_token in shared_keys.json. Continue?";
+          if (!window.confirm(msg)) return;
+          try {{
+            var res = await fetch("/api/r2/provision-all", {{ method: "POST" }}).then(function(r) {{ return r.json(); }});
+            if (!res.ok) {{
+              alert("Setup failed: " + (res.error || JSON.stringify(res)));
+              return;
+            }}
+            var lines = ["R2 setup done."];
+            lines.push("Disposable: " + (res.disposable_bucket || "?") + " (delete after " + (res.disposable_auto_delete_days || 7) + " days)");
+            lines.push("Disposable URL: " + (res.disposable_public_base_url || "?"));
+            (res.sites || []).forEach(function(s) {{
+              lines.push((s.id || "?") + " → " + (s.r2_bucket || "?"));
+            }});
+            alert(lines.join("\\n"));
+          }} catch (e) {{
+            alert("R2 setup error: " + e);
+          }}
+        }}
+
         function _restoreProjectLogsFromStorage() {{
           (projectFolders || []).forEach(function(logId) {{
             var v = "";
@@ -7892,6 +8032,7 @@ def index():
             </form>
             <button type="button" class="btn btn-outline-warning ms-2" id="cleanupLocalBtn" data-step-key="CLEANUP LOCAL" onclick="confirmCleanupLocal('')">Cleanup local</button>
             <button type="button" class="btn btn-outline-danger ms-2" id="cleanupR2Btn" data-step-key="CLEANUP R2" onclick="confirmCleanupR2('')">Cleanup R2 unused</button>
+            <button type="button" class="btn btn-outline-info ms-2" id="setupR2Btn" data-step-key="SETUP R2 BUCKETS" onclick="setupR2Buckets()">Setup R2 buckets</button>
           </div>
         </div>
 

@@ -54,23 +54,27 @@ HEADERS = {
 }
 
 # =============================
-# Cloudflare R2 — per active site (PINTEREST_SITE_ID); see a1_config.get_r2_config
+# Cloudflare R2 — permanent (site) + disposable (shared, auto-delete) buckets
 # =============================
-_R2_RUNTIME: dict = {}
+_R2_RUNTIMES: dict = {}
 
 
-def _init_r2_runtime(force: bool = False) -> dict:
-    """Load R2 client + bucket for the current project (each site can override r2_bucket)."""
-    global _R2_RUNTIME
-    if _R2_RUNTIME and not force:
-        return _R2_RUNTIME
+def _init_r2_runtime(force: bool = False, bucket_kind: str = "disposable") -> dict:
+    """Load R2 client for permanent (site) or disposable (shared temp) bucket."""
+    global _R2_RUNTIMES
+    kind = "permanent" if str(bucket_kind).strip().lower() == "permanent" else "disposable"
+    if _R2_RUNTIMES.get(kind) and not force:
+        return _R2_RUNTIMES[kind]
     keys = a1_config.load_keys()
-    cfg = a1_config.get_r2_config(keys)
-    _R2_RUNTIME = {
+    disposable = kind == "disposable"
+    cfg = a1_config.get_r2_disposable_config(keys) if disposable else a1_config.get_r2_config(keys)
+    rt = {
+        "kind": kind,
         "cfg": cfg,
-        "client": a1_config.make_r2_client(keys),
+        "client": a1_config.make_r2_client(keys, disposable=disposable),
     }
-    return _R2_RUNTIME
+    _R2_RUNTIMES[kind] = rt
+    return rt
 
 # =============================
 # Paths
@@ -176,19 +180,24 @@ def split_midjourney_grid(image):
         raise Exception(f"Failed to split image: {e}")
 
 # ===== R2 robust upload with retries & re-init =====
-def _r2_put(image: Image.Image, key_prefix: str) -> str:
+def _r2_put(image: Image.Image, key_prefix: str, bucket_kind: str = "disposable") -> str:
     """
-    رفع صورة إلى R2 مع retries وتفادي التجمّد.
-    نستعمل put_object مباشرة (مستقرة مع R2) + إعادة تهيئة العميل عند الحاجة.
+    Upload image to R2 (disposable = temp bucket with auto lifecycle, permanent = site bucket).
     """
-    rt = _init_r2_runtime()
+    rt = _init_r2_runtime(bucket_kind=bucket_kind)
     cfg = rt["cfg"]
     client = rt["client"]
     bucket = cfg["bucket"]
     public_base = cfg["public_base_url"]
+    kind_label = "permanent site" if bucket_kind == "permanent" else "disposable temp"
 
     fname = f"{uuid.uuid4().hex[:11]}.png"
-    key   = f"{key_prefix}/{fname}".lstrip("/")
+    key_body = f"{key_prefix}/{fname}".lstrip("/")
+    if bucket_kind != "permanent":
+        site = a1_config.get_active_site()
+        site_tag = str((site or {}).get("id") or "site").strip().lower()
+        key_body = f"{site_tag}/{key_body}"
+    key = key_body
 
     # حضّر البوفر مرة وحدة
     buf = BytesIO()
@@ -211,12 +220,12 @@ def _r2_put(image: Image.Image, key_prefix: str) -> str:
             print(f"      ↻ R2 upload retry {attempt}/{attempts} after error: {e}", flush=True)
             if attempt == 3:
                 try:
-                    rt = _init_r2_runtime(force=True)
+                    rt = _init_r2_runtime(force=True, bucket_kind=bucket_kind)
                     client = rt["client"]
                     cfg = rt["cfg"]
                     bucket = cfg["bucket"]
                     public_base = cfg["public_base_url"]
-                    print("      ↻ R2 client re-initialized.", flush=True)
+                    print(f"      ↻ R2 client re-initialized ({kind_label}).", flush=True)
                 except Exception as e2:
                     print(f"      ❗ R2 client re-init failed: {e2}", flush=True)
             time.sleep(1.2 * attempt)
@@ -354,18 +363,20 @@ def process_midjourney_grid_to_r2(grid_url, prompt_hash, mode_prefix="main"):
         print(f"    ✂️ Splitting image into 4 parts...", flush=True)
         split_images = split_midjourney_grid(main_image)
 
-        print(f"    ☁️ Uploading main image to Cloudflare R2...", flush=True)
+        print(f"    ☁️ Uploading main grid to disposable R2...", flush=True)
         main_key_prefix = f"midjourney_grids/{mode_prefix}/{str(prompt_hash)[:8]}"
-        main_r2_url = _r2_put(main_image, main_key_prefix)
+        main_r2_url = _r2_put(main_image, main_key_prefix, bucket_kind="disposable")
 
-        print(f"    ☁️ Uploading {len(split_images)} split images to Cloudflare R2...", flush=True)
+        print(f"    ☁️ Uploading {len(split_images)} split images to R2...", flush=True)
         split_urls = []
         split_key_prefix = f"midjourney_splits/{mode_prefix}/{str(prompt_hash)[:8]}"
         for i, img in enumerate(split_images, 1):
             try:
-                url = _r2_put(img, split_key_prefix)
+                bkind = "permanent" if i == 1 else "disposable"
+                url = _r2_put(img, split_key_prefix, bucket_kind=bkind)
                 split_urls.append(url)
-                print(f"      ✓ Uploaded image {i}/4", flush=True)
+                dest = "site bucket (keep)" if i == 1 else "disposable (auto-delete)"
+                print(f"      ✓ Uploaded image {i}/4 → {dest}", flush=True)
             except Exception as e:
                 split_urls.append('')
                 print(f"      ❌ Failed image {i}/4 upload: {e}", flush=True)
@@ -424,9 +435,11 @@ def _process_status_to_images_like_script1(status_data, mode_prefix, df, row_idx
             for j in range(4):
                 try:
                     img = download_image(urls[j])
-                    up = _r2_put(img, split_key_prefix)
+                    bkind = "permanent" if j == 0 else "disposable"
+                    up = _r2_put(img, split_key_prefix, bucket_kind=bkind)
                     uploaded.append(up)
-                    print(f"      ✓ Uploaded image {j+1}/4", flush=True)
+                    dest = "site bucket (keep)" if j == 0 else "disposable (auto-delete)"
+                    print(f"      ✓ Uploaded image {j+1}/4 → {dest}", flush=True)
                 except Exception as e:
                     uploaded.append('')
                     print(f"      ❌ Failed image {j+1}/4 upload: {e}", flush=True)
@@ -715,19 +728,24 @@ def main():
     print(f"Site id         : {site.get('id', '')}", flush=True)
     print(f"Output dir      : {a1_config.all_output_dir()}", flush=True)
 
-    # Verify R2 connection for this project's bucket
+    # Verify R2 connection (permanent site bucket + shared disposable bucket)
     try:
-        rt = _init_r2_runtime(force=True)
-        cfg = rt["cfg"]
-        print(f"R2 bucket       : {cfg.get('bucket')}", flush=True)
-        print(f"R2 public URL   : {cfg.get('public_base_url')}", flush=True)
-        rt["client"].head_bucket(Bucket=cfg["bucket"])
-        print("✅ Cloudflare R2 connection successful", flush=True)
+        rt_perm = _init_r2_runtime(force=True, bucket_kind="permanent")
+        cfg_p = rt_perm["cfg"]
+        print(f"R2 site bucket  : {cfg_p.get('bucket')} (keep — WordPress / site)", flush=True)
+        print(f"R2 site URL     : {cfg_p.get('public_base_url')}", flush=True)
+        rt_perm["client"].head_bucket(Bucket=cfg_p["bucket"])
+        rt_disp = _init_r2_runtime(force=True, bucket_kind="disposable")
+        cfg_d = rt_disp["cfg"]
+        print(f"R2 temp bucket  : {cfg_d.get('bucket')} (auto-delete after lifecycle)", flush=True)
+        print(f"R2 temp URL     : {cfg_d.get('public_base_url')}", flush=True)
+        rt_disp["client"].head_bucket(Bucket=cfg_d["bucket"])
+        print("✅ Cloudflare R2 connection successful (site + disposable)", flush=True)
     except Exception as e:
         print(f"❌ R2 configuration error: {e}", flush=True)
         print(
-            "Set shared R2 keys in config/shared_keys.json and per-project r2_bucket / "
-            "r2_public_base_url on each site row in config/sites.json.",
+            "Run dashboard Setup R2 buckets or set cloudflare_api_token in shared_keys.json. "
+            "Each site needs r2_bucket + r2_public_base_url; shared disposable bucket in shared_keys.",
             flush=True,
         )
         return
